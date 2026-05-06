@@ -1,0 +1,30 @@
+{
+  "name": "template-agente-ia-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Template de agente de IA conversacional para WhatsApp via Evolution API + OpenAI + Supabase",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/sensible": "^6.0.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "fastify": "^5.0.0",
+    "openai": "^4.80.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.2.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

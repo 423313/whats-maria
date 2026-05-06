@@ -1,0 +1,139 @@
+import { logger } from '../lib/logger.js';
+import { getOpenAIClient } from '../lib/openai.js';
+import { supabase } from '../lib/supabase.js';
+import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-config.js';
+
+export const MEDIA_FALLBACK =
+  'oi, ainda não consigo ouvir áudios ou ver imagens por aqui, pode me escrever em texto?';
+
+const RESPONSE_SCHEMA = {
+  name: 'assistant_reply',
+  strict: true,
+  schema: {
+    type: 'object',
+    properties: {
+      mensagens: {
+        type: 'array',
+        description:
+          'Lista de mensagens separadas que serão enviadas SEQUENCIALMENTE no WhatsApp, simulando como um humano digita em pedaços. ' +
+          'OBRIGATÓRIO dividir em 2-5 mensagens curtas — NUNCA retornar uma única string longa. ' +
+          'Cada item do array vira UMA mensagem separada no chat. ' +
+          'Quebra natural recomendada: confirmação/saudação na 1ª, próximo passo/explicação na 2ª, CTA/link/pergunta na 3ª. ' +
+          'Mesmo respostas curtas devem virar 2 mensagens (ex: "perfeito!" + "vou te enviar agora"). ' +
+          'NÃO é um array de parágrafos — é um array de MENSAGENS DE WHATSAPP.',
+        items: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Texto de UMA mensagem isolada de WhatsApp. Máximo 1-3 linhas (frases curtas, fôlego natural). ' +
+            'Sem markdown (sem **, sem -, sem #). No máximo 1 emoji. ' +
+            'Não comece com cumprimento se não for a primeira mensagem da conversa.',
+        },
+        minItems: 2,
+        maxItems: 5,
+      },
+    },
+    required: ['mensagens'],
+    additionalProperties: false,
+  },
+} as const;
+
+export interface AgentReply {
+  mensagens: string[];
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export interface RunAgentInput {
+  agentType: string;
+  sessionId: string;
+  userText: string;
+  config?: AgentConfig;
+}
+
+interface HistoryRow {
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow[]> {
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('role, content, created_at')
+    .eq('session_id', sessionId)
+    .in('role', ['user', 'assistant'])
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    logger.warn({ err: error.message, session_id: sessionId }, 'history load failed');
+    return [];
+  }
+  return ((data ?? []) as HistoryRow[]).reverse();
+}
+
+function buildSystemMessage(config: AgentConfig): string {
+  return config.system_prompt;
+}
+
+export async function runAgent(input: RunAgentInput): Promise<AgentReply> {
+  const config = input.config ?? (await loadAgentConfig(input.agentType));
+  if (!config.enabled) {
+    throw new Error(`agent_type=${input.agentType} is disabled in agent_configs`);
+  }
+  const openaiKey = resolveOpenAIKey(config);
+
+  const history = await loadHistory(input.sessionId, config.history_limit);
+
+  const systemMessage = buildSystemMessage(config);
+
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+    { role: 'system', content: systemMessage },
+    ...history.map((h) => ({
+      role: (h.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: h.content,
+    })),
+    { role: 'user', content: input.userText },
+  ];
+
+  const client = getOpenAIClient(openaiKey);
+  const response = await client.chat.completions.create({
+    model: config.openai_model,
+    messages,
+    response_format: {
+      type: 'json_schema',
+      json_schema: RESPONSE_SCHEMA,
+    },
+  });
+
+  const choice = response.choices[0];
+  const content = choice?.message?.content ?? '';
+  let parsed: { mensagens?: unknown };
+  try {
+    parsed = JSON.parse(content);
+  } catch (err) {
+    logger.error({ err, content }, 'agent output JSON.parse failed');
+    throw new Error('agent returned invalid JSON');
+  }
+
+  const maxOut = config.max_output_messages;
+  const mensagens = Array.isArray(parsed.mensagens)
+    ? parsed.mensagens
+        .filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+        .map((m) => m.trim())
+        .slice(0, maxOut)
+    : [];
+
+  if (mensagens.length === 0) {
+    throw new Error('agent returned zero valid messages');
+  }
+
+  return {
+    mensagens,
+    model: response.model,
+    tokens_in: response.usage?.prompt_tokens ?? 0,
+    tokens_out: response.usage?.completion_tokens ?? 0,
+  };
+}

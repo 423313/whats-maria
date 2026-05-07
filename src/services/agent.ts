@@ -74,8 +74,24 @@ async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow
   return ((data ?? []) as HistoryRow[]).reverse();
 }
 
-function buildSystemMessage(config: AgentConfig): string {
-  return config.system_prompt;
+function buildSystemMessage(config: AgentConfig, clientName?: string | null): string {
+  if (!clientName?.trim()) return config.system_prompt;
+
+  const contextBlock =
+    `[CONTEXTO DA SESSÃO — leia antes de qualquer coisa]\n` +
+    `Esta cliente já se identificou anteriormente. Nome: ${clientName.trim()}.\n` +
+    `USE esse nome quando for natural. NÃO peça o nome novamente — você já sabe.\n\n`;
+
+  return contextBlock + config.system_prompt;
+}
+
+async function loadClientName(sessionId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('chat_control')
+    .select('client_name')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  return data?.client_name ?? null;
 }
 
 export async function runAgent(input: RunAgentInput): Promise<AgentReply> {
@@ -85,9 +101,12 @@ export async function runAgent(input: RunAgentInput): Promise<AgentReply> {
   }
   const openaiKey = resolveOpenAIKey(config);
 
-  const history = await loadHistory(input.sessionId, config.history_limit);
+  const [history, clientName] = await Promise.all([
+    loadHistory(input.sessionId, config.history_limit),
+    loadClientName(input.sessionId),
+  ]);
 
-  const systemMessage = buildSystemMessage(config);
+  const systemMessage = buildSystemMessage(config, clientName);
 
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system', content: systemMessage },

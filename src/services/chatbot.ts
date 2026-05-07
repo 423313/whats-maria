@@ -139,6 +139,11 @@ export async function handleEvolutionWebhook(
 
   await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
 
+  // Salva o nome do WhatsApp como fallback (não sobrescreve nome explícito já registrado)
+  if (pushName) {
+    await saveClientNameIfMissing(sessionId, pushName);
+  }
+
   const paused = await isAIPaused(sessionId);
   if (paused) {
     logger.info({ session_id: sessionId }, 'ai paused, buffering without flush');
@@ -569,6 +574,40 @@ async function isAIPaused(sessionId: string): Promise<boolean> {
   return data === true;
 }
 
+/**
+ * Salva o nome da cliente apenas se ainda não houver nome registrado (prioridade: nome
+ * explícito informado pelo cliente > pushName do WhatsApp).
+ */
+async function saveClientNameIfMissing(sessionId: string, name: string): Promise<void> {
+  const clean = name.trim();
+  if (!clean) return;
+  const { error } = await supabase
+    .from('chat_control')
+    .update({ client_name: clean, updated_at: new Date().toISOString() })
+    .eq('session_id', sessionId)
+    .is('client_name', null); // só grava se ainda não tem nome (não sobrescreve nome explícito)
+  if (error) {
+    logger.debug({ err: error.message, session_id: sessionId }, 'saveClientNameIfMissing noop');
+  }
+}
+
+/**
+ * Salva (ou atualiza) o nome explícito informado pela cliente — tem prioridade sobre pushName.
+ */
+async function saveClientName(sessionId: string, name: string): Promise<void> {
+  const clean = name.trim();
+  if (!clean) return;
+  const { error } = await supabase
+    .from('chat_control')
+    .update({ client_name: clean, updated_at: new Date().toISOString() })
+    .eq('session_id', sessionId);
+  if (error) {
+    logger.warn({ err: error.message, session_id: sessionId }, 'saveClientName failed');
+  } else {
+    logger.info({ session_id: sessionId, name: clean }, 'nome da cliente registrado');
+  }
+}
+
 async function resetFollowupState(sessionId: string): Promise<void> {
   const { error } = await supabase
     .from('chat_control')
@@ -835,6 +874,11 @@ async function handlePendingActions(
   const rawBlock = match[0]!;
   const fields = parseFields(match[1]!);
   const clientName = extractClientName(fields);
+
+  // Persiste o nome explícito (prioridade máxima — sobrescreve pushName)
+  if (clientName) {
+    void saveClientName(sessionId, clientName);
+  }
 
   // Salva no banco (ignora duplicata para a mesma sessão+tipo no mesmo dia)
   const today = new Date().toISOString().split('T')[0];

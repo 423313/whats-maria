@@ -11,6 +11,7 @@ import {
   startBufferSweeper,
   stopBufferSweeper,
 } from './services/buffer.js';
+import { startFollowupSweeper, stopFollowupSweeper } from './services/followup.js';
 
 async function main() {
   const app = Fastify({
@@ -28,6 +29,7 @@ async function main() {
 
   initChatbot();
   startBufferSweeper();
+  startFollowupSweeper();
 
   try {
     const address = await app.listen({ port: env.PORT, host: '0.0.0.0' });
@@ -42,6 +44,7 @@ async function main() {
     try {
       await app.close();
       stopBufferSweeper();
+      stopFollowupSweeper();
       await awaitInflightFlushes(25_000);
       process.exit(0);
     } catch (err) {

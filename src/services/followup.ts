@@ -3,8 +3,9 @@ import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 
-const FOLLOWUP_AFTER_MS = 60 * 60 * 1000; // 60 minutos
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;  // checar a cada 5 minutos
+const FOLLOWUP_AFTER_MS = 60 * 60 * 1000;       // 60 minutos sem resposta → follow-up
+const CLOSE_AFTER_FOLLOWUP_MS = 30 * 60 * 1000; // 30 min após follow-up sem resposta → encerramento
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;         // checar a cada 5 minutos
 
 let sweeperHandle: NodeJS.Timeout | null = null;
 
@@ -68,6 +69,36 @@ function buildFollowupMessage(context: FollowupContext): string[] {
       return [
         'Oi, notei que faz um tempinho que não nos falamos.',
         'Posso encerrar nosso atendimento por aqui ou ainda tem alguma dúvida?',
+      ];
+  }
+}
+
+// ─── Monta a mensagem de encerramento ────────────────────────────────────────
+
+function buildClosingMessage(context: FollowupContext): string[] {
+  switch (context) {
+    case 'scheduling':
+      return [
+        'Vou encerrar o atendimento por aqui então! 😊',
+        'Quando quiser agendar é só me chamar. Até mais!',
+      ];
+    case 'course':
+      return [
+        'Vou encerrar por aqui! 😊',
+        'Se quiser saber mais sobre o curso depois, é só me chamar. Até!',
+      ];
+    case 'prices':
+      return [
+        'Vou encerrar o atendimento por aqui! 😊',
+        'Quando quiser marcar algum serviço é só me chamar. Até mais!',
+      ];
+    case 'greeting':
+      return ['Até mais! 😊'];
+    case 'generic':
+    default:
+      return [
+        'Vou encerrar o atendimento por aqui então! 😊',
+        'Qualquer dúvida futura é só me chamar. Até mais!',
       ];
   }
 }
@@ -159,6 +190,70 @@ async function sweepFollowups(): Promise<void> {
   }
 }
 
+// ─── Sweep de encerramento (30 min após follow-up sem resposta) ───────────────
+
+async function sweepCloseSessions(): Promise<void> {
+  if (!env.EVOLUTION_INSTANCE) return;
+
+  const cutoff = new Date(Date.now() - CLOSE_AFTER_FOLLOWUP_MS).toISOString();
+
+  // Busca sessões onde o follow-up foi enviado há mais de 30 min e ainda não foram encerradas
+  const { data: candidates, error } = await supabase
+    .from('chat_control')
+    .select('session_id, followup_sent_at, followup_context, instance, ai_paused')
+    .not('followup_sent_at', 'is', null)
+    .lt('followup_sent_at', cutoff)
+    .is('followup_closed_at', null);
+
+  if (error) {
+    logger.warn({ err: error.message }, 'close-sweep: falha ao buscar candidatos');
+    return;
+  }
+
+  for (const control of candidates ?? []) {
+    if (control.ai_paused) continue; // humano no controle, não interferir
+
+    // Verifica se a cliente respondeu após o follow-up (se sim, não encerrar)
+    const { data: userReply } = await supabase
+      .from('chat_messages')
+      .select('id')
+      .eq('session_id', control.session_id)
+      .eq('role', 'user')
+      .gt('created_at', control.followup_sent_at)
+      .limit(1)
+      .maybeSingle();
+
+    if (userReply) continue; // cliente respondeu, ciclo já foi resetado
+
+    const context = (control.followup_context as FollowupContext) ?? 'generic';
+    const lines = buildClosingMessage(context);
+    const instance = control.instance ?? env.EVOLUTION_INSTANCE;
+
+    try {
+      const evolution = getEvolutionClient();
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) await delay(1200);
+        await evolution.sendText(instance, control.session_id, lines[i]!);
+      }
+
+      await supabase
+        .from('chat_control')
+        .update({
+          followup_closed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('session_id', control.session_id);
+
+      logger.info({ session_id: control.session_id, context }, 'encerramento automático enviado');
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), session_id: control.session_id },
+        'close-sweep: falha ao enviar mensagem de encerramento',
+      );
+    }
+  }
+}
+
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
@@ -170,6 +265,9 @@ export function startFollowupSweeper(): void {
   sweeperHandle = setInterval(() => {
     sweepFollowups().catch((err) => {
       logger.error({ err: err instanceof Error ? err.message : String(err) }, 'followup sweeper erro');
+    });
+    sweepCloseSessions().catch((err) => {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'close sweeper erro');
     });
   }, CHECK_INTERVAL_MS);
 

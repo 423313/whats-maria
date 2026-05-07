@@ -134,6 +134,9 @@ export async function handleEvolutionWebhook(
     pushName,
   });
 
+  // Cliente respondeu → reseta o ciclo de follow-up/encerramento para reiniciar do zero
+  await resetFollowupState(sessionId);
+
   await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
 
   const paused = await isAIPaused(sessionId);
@@ -564,6 +567,24 @@ async function isAIPaused(sessionId: string): Promise<boolean> {
     return false;
   }
   return data === true;
+}
+
+async function resetFollowupState(sessionId: string): Promise<void> {
+  const { error } = await supabase
+    .from('chat_control')
+    .update({
+      followup_sent_at: null,
+      followup_closed_at: null,
+      followup_context: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('session_id', sessionId)
+    .not('followup_sent_at', 'is', null); // só atualiza se havia follow-up pendente (otimização)
+  if (error) {
+    logger.debug({ err: error.message, session_id: sessionId }, 'resetFollowupState noop ou erro');
+  } else {
+    logger.debug({ session_id: sessionId }, 'ciclo de follow-up resetado (nova mensagem da cliente)');
+  }
 }
 
 async function updateMarianaManualAt(sessionId: string): Promise<void> {

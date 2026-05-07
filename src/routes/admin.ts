@@ -163,6 +163,14 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
+  // Métricas do dashboard
+  app.get('/admin/metrics', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+    const { data, error } = await supabase.rpc('get_dashboard_metrics');
+    if (error) return reply.status(500).send({ error: error.message });
+    return reply.send(data ?? {});
+  });
+
   // Lista revisões semanais
   app.get('/admin/reviews', async (req, reply) => {
     if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });

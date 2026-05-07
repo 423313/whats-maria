@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Studio Mariana Castro — FLORA Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; min-height: 100vh; }
@@ -113,6 +114,22 @@
     font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .btn-save:hover { background: #a01f35; }
+
+  /* Métricas */
+  .metric-card {
+    background: #fff; border-radius: 12px; padding: 20px 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 1px solid #ece6e0;
+  }
+  .metric-card-accent { border-top: 3px solid #8b1a2e; }
+  .metric-card-green  { border-top: 3px solid #2e7d32; }
+  .metric-card-blue   { border-top: 3px solid #1565c0; }
+  .metric-value { font-size: 32px; font-weight: 700; color: #2d2d2d; line-height: 1; margin-bottom: 6px; }
+  .metric-label { font-size: 12px; color: #888; font-weight: 500; }
+  .chart-box {
+    background: #fff; border-radius: 12px; padding: 20px 20px 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 1px solid #ece6e0;
+  }
+  .chart-title { font-size: 13px; font-weight: 600; color: #555; margin-bottom: 12px; }
   .save-status { font-size: 13px; color: #22c55e; font-weight: 500; }
   .save-error { font-size: 13px; color: #ff4444; font-weight: 500; }
 
@@ -159,6 +176,7 @@
       <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt da FLORA</button>
       <button class="nav-btn" onclick="showView('pending')" id="nav-pending">⏳ Pendências</button>
       <button class="nav-btn" onclick="showView('reviews')" id="nav-reviews">📊 Revisões Semanais</button>
+      <button class="nav-btn" onclick="showView('metrics')" id="nav-metrics">📈 Métricas</button>
     </div>
     <div id="sessions-loading" class="sidebar-loading">Carregando...</div>
     <div id="sessions-list" class="sessions-list"></div>
@@ -215,6 +233,62 @@
       </div>
       <p style="font-size:13px; color:#888; margin-bottom:24px;">Toda segunda-feira às 08h o GPT-4 analisa automaticamente todas as conversas da semana e atualiza o prompt da FLORA.</p>
       <div id="reviews-list"></div>
+    </div>
+
+    <div id="metrics-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto; gap:24px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+        <h2 style="font-size:18px; font-weight:700;">📈 Métricas do Atendimento</h2>
+        <button class="btn-save" onclick="loadMetrics()" style="padding:8px 20px; font-size:13px;">↻ Atualizar</button>
+      </div>
+      <p style="font-size:13px; color:#888; margin-top:-16px; margin-bottom:8px;">Dados dos últimos 30 dias. Horários em fuso de Brasília (UTC-3).</p>
+
+      <!-- Cards de resumo -->
+      <div id="metrics-cards" style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px;">
+        <div class="metric-card"><div class="metric-value" id="mc-hoje">—</div><div class="metric-label">Conversas hoje</div></div>
+        <div class="metric-card"><div class="metric-value" id="mc-semana">—</div><div class="metric-label">Conversas esta semana</div></div>
+        <div class="metric-card"><div class="metric-value" id="mc-mes">—</div><div class="metric-label">Conversas este mês</div></div>
+        <div class="metric-card metric-card-accent"><div class="metric-value" id="mc-conversao">—%</div><div class="metric-label">Taxa de conversão (agendamentos)</div></div>
+      </div>
+
+      <!-- Linha 2: conversas por semana + serviços -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+        <div class="chart-box">
+          <div class="chart-title">Conversas por semana</div>
+          <canvas id="chart-semanas" height="220"></canvas>
+        </div>
+        <div class="chart-box">
+          <div class="chart-title">Serviços mais perguntados (30 dias)</div>
+          <canvas id="chart-servicos" height="220"></canvas>
+        </div>
+      </div>
+
+      <!-- Linha 3: horários de pico + dias da semana -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+        <div class="chart-box">
+          <div class="chart-title">Horários de pico (mensagens por hora)</div>
+          <canvas id="chart-horas" height="220"></canvas>
+        </div>
+        <div class="chart-box">
+          <div class="chart-title">Mensagens por dia da semana</div>
+          <canvas id="chart-dias" height="220"></canvas>
+        </div>
+      </div>
+
+      <!-- Linha 4: mini stats de conversão -->
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px;">
+        <div class="metric-card">
+          <div class="metric-value" id="mc-total-sessoes">—</div>
+          <div class="metric-label">Sessões iniciadas (30 dias)</div>
+        </div>
+        <div class="metric-card metric-card-green">
+          <div class="metric-value" id="mc-agendamentos">—</div>
+          <div class="metric-label">Agendamentos gerados</div>
+        </div>
+        <div class="metric-card metric-card-blue">
+          <div class="metric-value" id="mc-cursos">—</div>
+          <div class="metric-label">Leads de curso</div>
+        </div>
+      </div>
     </div>
 
     <div id="prompt-view">
@@ -573,6 +647,16 @@
       document.getElementById('main-sub').textContent = 'Análise automática toda segunda-feira às 08h';
       loadReviews();
     }
+
+    document.getElementById('metrics-view').style.display = view === 'metrics' ? 'flex' : 'none';
+    document.getElementById('nav-metrics').classList.toggle('active', view === 'metrics');
+    if (view === 'metrics') {
+      document.getElementById('empty-view').style.display = 'none';
+      document.getElementById('chat-view').style.display = 'none';
+      document.getElementById('main-title').textContent = 'Métricas';
+      document.getElementById('main-sub').textContent = 'Visão geral do desempenho do atendimento';
+      loadMetrics();
+    }
   }
 
   // ---- HELPERS ----
@@ -597,6 +681,133 @@
 
   function escapeHtml(str) {
     return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  }
+
+  // ---- MÉTRICAS ----
+  const _charts = {};
+
+  function destroyChart(id) {
+    if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
+  }
+
+  async function loadMetrics() {
+    const res = await fetch('/admin/metrics', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) { console.error('metrics error', res.status); return; }
+    const d = await res.json();
+
+    // Cards de resumo
+    const s = d.summary || {};
+    document.getElementById('mc-hoje').textContent   = s.hoje   ?? '0';
+    document.getElementById('mc-semana').textContent = s.semana ?? '0';
+    document.getElementById('mc-mes').textContent    = s.mes    ?? '0';
+
+    const conv = d.conversao || {};
+    const taxa = conv.total_sessoes > 0
+      ? Math.round((conv.agendamentos / conv.total_sessoes) * 100)
+      : 0;
+    document.getElementById('mc-conversao').textContent     = taxa + '%';
+    document.getElementById('mc-total-sessoes').textContent = conv.total_sessoes ?? '0';
+    document.getElementById('mc-agendamentos').textContent  = conv.agendamentos  ?? '0';
+    document.getElementById('mc-cursos').textContent        = conv.cursos        ?? '0';
+
+    // Cores base
+    const vermelho = 'rgba(139,26,46,0.8)';
+    const vermelhoLight = 'rgba(139,26,46,0.15)';
+    const cinza = 'rgba(100,100,100,0.7)';
+
+    // Gráfico: conversas por semana
+    const semanas = d.conversas_por_semana || [];
+    destroyChart('semanas');
+    _charts['semanas'] = new Chart(document.getElementById('chart-semanas'), {
+      type: 'bar',
+      data: {
+        labels: semanas.map(r => r.semana),
+        datasets: [{
+          label: 'Conversas',
+          data: semanas.map(r => r.total),
+          backgroundColor: vermelho,
+          borderRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+      }
+    });
+
+    // Gráfico: serviços mais perguntados (horizontal)
+    const servs = d.servicos || [];
+    destroyChart('servicos');
+    _charts['servicos'] = new Chart(document.getElementById('chart-servicos'), {
+      type: 'bar',
+      data: {
+        labels: servs.map(r => r.servico),
+        datasets: [{
+          label: 'Menções',
+          data: servs.map(r => r.mencoes),
+          backgroundColor: servs.map((_, i) => i === 0 ? vermelho : cinza),
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }
+      }
+    });
+
+    // Gráfico: horários de pico
+    const horas = [];
+    for (let h = 0; h < 24; h++) {
+      const found = (d.horarios_pico || []).find(r => r.hora === h);
+      horas.push({ hora: h, mensagens: found ? found.mensagens : 0 });
+    }
+    destroyChart('horas');
+    _charts['horas'] = new Chart(document.getElementById('chart-horas'), {
+      type: 'bar',
+      data: {
+        labels: horas.map(r => r.hora + 'h'),
+        datasets: [{
+          label: 'Mensagens',
+          data: horas.map(r => r.mensagens),
+          backgroundColor: horas.map(r => (r.hora >= 8 && r.hora <= 18) ? vermelho : cinza),
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+      }
+    });
+
+    // Gráfico: dias da semana
+    const diasNomes = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    const diasData = [];
+    for (let i = 0; i < 7; i++) {
+      const found = (d.dias_semana || []).find(r => r.dia_num === i);
+      diasData.push({ dia: diasNomes[i], mensagens: found ? found.mensagens : 0 });
+    }
+    destroyChart('dias');
+    _charts['dias'] = new Chart(document.getElementById('chart-dias'), {
+      type: 'bar',
+      data: {
+        labels: diasData.map(r => r.dia),
+        datasets: [{
+          label: 'Mensagens',
+          data: diasData.map(r => r.mensagens),
+          backgroundColor: diasData.map((r, i) => (i === 0 || i === 6) ? cinza : vermelho),
+          borderRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+      }
+    });
   }
 </script>
 </body>

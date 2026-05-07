@@ -116,20 +116,23 @@
   .btn-save:hover { background: #a01f35; }
 
   /* Métricas */
+  #metrics-view { height: calc(100vh - 65px); overflow: hidden; }
   .metric-card {
-    background: #fff; border-radius: 12px; padding: 20px 24px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 1px solid #ece6e0;
+    background: #fff; border-radius: 8px; padding: 10px 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #ece6e0;
   }
-  .metric-card-accent { border-top: 3px solid #8b1a2e; }
-  .metric-card-green  { border-top: 3px solid #2e7d32; }
-  .metric-card-blue   { border-top: 3px solid #1565c0; }
-  .metric-value { font-size: 32px; font-weight: 700; color: #2d2d2d; line-height: 1; margin-bottom: 6px; }
-  .metric-label { font-size: 12px; color: #888; font-weight: 500; }
+  .metric-card-accent { border-left: 3px solid #8b1a2e; }
+  .metric-card-green  { border-left: 3px solid #2e7d32; }
+  .metric-card-blue   { border-left: 3px solid #1565c0; }
+  .metric-value { font-size: 22px; font-weight: 700; color: #2d2d2d; line-height: 1; margin-bottom: 2px; }
+  .metric-label { font-size: 10px; color: #999; font-weight: 500; line-height: 1.2; }
   .chart-box {
-    background: #fff; border-radius: 12px; padding: 20px 20px 12px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 1px solid #ece6e0;
+    background: #fff; border-radius: 8px; padding: 10px 12px 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #ece6e0;
+    display: flex; flex-direction: column;
   }
-  .chart-title { font-size: 13px; font-weight: 600; color: #555; margin-bottom: 12px; }
+  .chart-title { font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .chart-box canvas { flex: 1; }
   .save-status { font-size: 13px; color: #22c55e; font-weight: 500; }
   .save-error { font-size: 13px; color: #ff4444; font-weight: 500; }
 
@@ -235,60 +238,49 @@
       <div id="reviews-list"></div>
     </div>
 
-    <div id="metrics-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto; gap:24px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-        <h2 style="font-size:18px; font-weight:700;">📈 Métricas do Atendimento</h2>
-        <button class="btn-save" onclick="loadMetrics()" style="padding:8px 20px; font-size:13px;">↻ Atualizar</button>
-      </div>
-      <p style="font-size:13px; color:#888; margin-top:-16px; margin-bottom:8px;">Dados dos últimos 30 dias. Horários em fuso de Brasília (UTC-3).</p>
+    <div id="metrics-view" style="display:none; flex-direction:column; flex:1; padding:16px 20px 12px; gap:10px; overflow:hidden;">
 
-      <!-- Cards de resumo -->
-      <div id="metrics-cards" style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px;">
-        <div class="metric-card"><div class="metric-value" id="mc-hoje">—</div><div class="metric-label">Conversas hoje</div></div>
-        <div class="metric-card"><div class="metric-value" id="mc-semana">—</div><div class="metric-label">Conversas esta semana</div></div>
-        <div class="metric-card"><div class="metric-value" id="mc-mes">—</div><div class="metric-label">Conversas este mês</div></div>
-        <div class="metric-card metric-card-accent"><div class="metric-value" id="mc-conversao">—%</div><div class="metric-label">Taxa de conversão (agendamentos)</div></div>
+      <!-- Cabeçalho compacto -->
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <span style="font-size:13px; font-weight:600; color:#555;">Dados dos últimos 30 dias · fuso Brasília</span>
+        <button class="refresh-btn" onclick="loadMetrics()">↻ Atualizar</button>
       </div>
 
-      <!-- Linha 2: conversas por semana + serviços -->
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <!-- 7 cards em uma linha -->
+      <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:8px;">
+        <div class="metric-card"><div class="metric-value" id="mc-hoje">—</div><div class="metric-label">Hoje</div></div>
+        <div class="metric-card"><div class="metric-value" id="mc-semana">—</div><div class="metric-label">Esta semana</div></div>
+        <div class="metric-card"><div class="metric-value" id="mc-mes">—</div><div class="metric-label">Este mês</div></div>
+        <div class="metric-card metric-card-accent"><div class="metric-value" id="mc-conversao">—%</div><div class="metric-label">Conversão</div></div>
+        <div class="metric-card"><div class="metric-value" id="mc-total-sessoes">—</div><div class="metric-label">Sessões (30d)</div></div>
+        <div class="metric-card metric-card-green"><div class="metric-value" id="mc-agendamentos">—</div><div class="metric-label">Agendamentos</div></div>
+        <div class="metric-card metric-card-blue"><div class="metric-value" id="mc-cursos">—</div><div class="metric-label">Leads curso</div></div>
+      </div>
+
+      <!-- 2 gráficos superiores -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; min-height:0;">
         <div class="chart-box">
           <div class="chart-title">Conversas por semana</div>
-          <canvas id="chart-semanas" height="220"></canvas>
+          <canvas id="chart-semanas"></canvas>
         </div>
         <div class="chart-box">
-          <div class="chart-title">Serviços mais perguntados (30 dias)</div>
-          <canvas id="chart-servicos" height="220"></canvas>
+          <div class="chart-title">Serviços mais perguntados</div>
+          <canvas id="chart-servicos"></canvas>
         </div>
       </div>
 
-      <!-- Linha 3: horários de pico + dias da semana -->
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <!-- 2 gráficos inferiores -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; min-height:0;">
         <div class="chart-box">
-          <div class="chart-title">Horários de pico (mensagens por hora)</div>
-          <canvas id="chart-horas" height="220"></canvas>
+          <div class="chart-title">Horários de pico</div>
+          <canvas id="chart-horas"></canvas>
         </div>
         <div class="chart-box">
           <div class="chart-title">Mensagens por dia da semana</div>
-          <canvas id="chart-dias" height="220"></canvas>
+          <canvas id="chart-dias"></canvas>
         </div>
       </div>
 
-      <!-- Linha 4: mini stats de conversão -->
-      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px;">
-        <div class="metric-card">
-          <div class="metric-value" id="mc-total-sessoes">—</div>
-          <div class="metric-label">Sessões iniciadas (30 dias)</div>
-        </div>
-        <div class="metric-card metric-card-green">
-          <div class="metric-value" id="mc-agendamentos">—</div>
-          <div class="metric-label">Agendamentos gerados</div>
-        </div>
-        <div class="metric-card metric-card-blue">
-          <div class="metric-value" id="mc-cursos">—</div>
-          <div class="metric-label">Leads de curso</div>
-        </div>
-      </div>
     </div>
 
     <div id="prompt-view">
@@ -715,6 +707,16 @@
     const vermelhoLight = 'rgba(139,26,46,0.15)';
     const cinza = 'rgba(100,100,100,0.7)';
 
+    const baseOpts = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      layout: { padding: 0 },
+      scales: {
+        x: { ticks: { font: { size: 10 }, maxRotation: 0 }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { font: { size: 10 }, stepSize: 1 }, grid: { color: '#f0ebe5' } }
+      }
+    };
+
     // Gráfico: conversas por semana
     const semanas = d.conversas_por_semana || [];
     destroyChart('semanas');
@@ -722,40 +724,27 @@
       type: 'bar',
       data: {
         labels: semanas.map(r => r.semana),
-        datasets: [{
-          label: 'Conversas',
-          data: semanas.map(r => r.total),
-          backgroundColor: vermelho,
-          borderRadius: 6,
-        }]
+        datasets: [{ data: semanas.map(r => r.total), backgroundColor: vermelho, borderRadius: 4 }]
       },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-      }
+      options: JSON.parse(JSON.stringify(baseOpts))
     });
 
     // Gráfico: serviços mais perguntados (horizontal)
     const servs = d.servicos || [];
     destroyChart('servicos');
+    const servsOpts = JSON.parse(JSON.stringify(baseOpts));
+    servsOpts.indexAxis = 'y';
+    servsOpts.scales.x.ticks.stepSize = 1;
+    servsOpts.scales.y.grid.display = false;
+    servsOpts.scales.x.grid.display = true;
+    servsOpts.scales.x.grid.color = '#f0ebe5';
     _charts['servicos'] = new Chart(document.getElementById('chart-servicos'), {
       type: 'bar',
       data: {
         labels: servs.map(r => r.servico),
-        datasets: [{
-          label: 'Menções',
-          data: servs.map(r => r.mencoes),
-          backgroundColor: servs.map((_, i) => i === 0 ? vermelho : cinza),
-          borderRadius: 4,
-        }]
+        datasets: [{ data: servs.map(r => r.mencoes), backgroundColor: servs.map((_, i) => i === 0 ? vermelho : cinza), borderRadius: 3 }]
       },
-      options: {
-        indexAxis: 'y',
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }
-      }
+      options: servsOpts
     });
 
     // Gráfico: horários de pico
@@ -769,18 +758,9 @@
       type: 'bar',
       data: {
         labels: horas.map(r => r.hora + 'h'),
-        datasets: [{
-          label: 'Mensagens',
-          data: horas.map(r => r.mensagens),
-          backgroundColor: horas.map(r => (r.hora >= 8 && r.hora <= 18) ? vermelho : cinza),
-          borderRadius: 4,
-        }]
+        datasets: [{ data: horas.map(r => r.mensagens), backgroundColor: horas.map(r => (r.hora >= 8 && r.hora <= 18) ? vermelho : cinza), borderRadius: 3 }]
       },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-      }
+      options: JSON.parse(JSON.stringify(baseOpts))
     });
 
     // Gráfico: dias da semana
@@ -795,18 +775,9 @@
       type: 'bar',
       data: {
         labels: diasData.map(r => r.dia),
-        datasets: [{
-          label: 'Mensagens',
-          data: diasData.map(r => r.mensagens),
-          backgroundColor: diasData.map((r, i) => (i === 0 || i === 6) ? cinza : vermelho),
-          borderRadius: 6,
-        }]
+        datasets: [{ data: diasData.map(r => r.mensagens), backgroundColor: diasData.map((_, i) => (i === 0 || i === 6) ? cinza : vermelho), borderRadius: 4 }]
       },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-      }
+      options: JSON.parse(JSON.stringify(baseOpts))
     });
   }
 </script>

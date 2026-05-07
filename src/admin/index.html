@@ -116,7 +116,7 @@
   .btn-save:hover { background: #a01f35; }
 
   /* Métricas */
-  #metrics-view { height: calc(100vh - 65px); overflow: hidden; }
+  #metrics-view { overflow-y: auto; }
   .metric-card {
     background: #fff; border-radius: 8px; padding: 10px 14px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #ece6e0;
@@ -126,13 +126,14 @@
   .metric-card-blue   { border-left: 3px solid #1565c0; }
   .metric-value { font-size: 22px; font-weight: 700; color: #2d2d2d; line-height: 1; margin-bottom: 2px; }
   .metric-label { font-size: 10px; color: #999; font-weight: 500; line-height: 1.2; }
+  .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 160px; }
   .chart-box {
-    background: #fff; border-radius: 8px; padding: 10px 12px 8px;
+    background: #fff; border-radius: 8px; padding: 8px 12px 6px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #ece6e0;
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; overflow: hidden;
   }
-  .chart-title { font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
-  .chart-box canvas { flex: 1; }
+  .chart-title { font-size: 10px; font-weight: 600; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; flex-shrink: 0; }
+  .chart-box canvas { flex: 1; min-height: 0; }
   .save-status { font-size: 13px; color: #22c55e; font-weight: 500; }
   .save-error { font-size: 13px; color: #ff4444; font-weight: 500; }
 
@@ -258,7 +259,7 @@
       </div>
 
       <!-- 2 gráficos superiores -->
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; min-height:0;">
+      <div class="chart-row">
         <div class="chart-box">
           <div class="chart-title">Conversas por semana</div>
           <canvas id="chart-semanas"></canvas>
@@ -270,7 +271,7 @@
       </div>
 
       <!-- 2 gráficos inferiores -->
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; min-height:0;">
+      <div class="chart-row">
         <div class="chart-box">
           <div class="chart-title">Horários de pico</div>
           <canvas id="chart-horas"></canvas>
@@ -724,7 +725,7 @@
       type: 'bar',
       data: {
         labels: semanas.map(r => r.semana),
-        datasets: [{ data: semanas.map(r => r.total), backgroundColor: vermelho, borderRadius: 4 }]
+        datasets: [{ data: semanas.map(r => r.total), backgroundColor: vermelho, borderRadius: 4, maxBarThickness: 36 }]
       },
       options: JSON.parse(JSON.stringify(baseOpts))
     });
@@ -742,12 +743,12 @@
       type: 'bar',
       data: {
         labels: servs.map(r => r.servico),
-        datasets: [{ data: servs.map(r => r.mencoes), backgroundColor: servs.map((_, i) => i === 0 ? vermelho : cinza), borderRadius: 3 }]
+        datasets: [{ data: servs.map(r => r.mencoes), backgroundColor: servs.map((_, i) => i === 0 ? vermelho : cinza), borderRadius: 3, maxBarThickness: 14 }]
       },
       options: servsOpts
     });
 
-    // Gráfico: horários de pico
+    // Gráfico: horários de pico (24h completo)
     const horas = [];
     for (let h = 0; h < 24; h++) {
       const found = (d.horarios_pico || []).find(r => r.hora === h);
@@ -758,7 +759,7 @@
       type: 'bar',
       data: {
         labels: horas.map(r => r.hora + 'h'),
-        datasets: [{ data: horas.map(r => r.mensagens), backgroundColor: horas.map(r => (r.hora >= 8 && r.hora <= 18) ? vermelho : cinza), borderRadius: 3 }]
+        datasets: [{ data: horas.map(r => r.mensagens), backgroundColor: horas.map(r => (r.hora >= 8 && r.hora <= 18) ? vermelho : cinza), borderRadius: 2, maxBarThickness: 20 }]
       },
       options: JSON.parse(JSON.stringify(baseOpts))
     });
@@ -775,7 +776,7 @@
       type: 'bar',
       data: {
         labels: diasData.map(r => r.dia),
-        datasets: [{ data: diasData.map(r => r.mensagens), backgroundColor: diasData.map((_, i) => (i === 0 || i === 6) ? cinza : vermelho), borderRadius: 4 }]
+        datasets: [{ data: diasData.map(r => r.mensagens), backgroundColor: diasData.map((_, i) => (i === 0 || i === 6) ? cinza : vermelho), borderRadius: 4, maxBarThickness: 36 }]
       },
       options: JSON.parse(JSON.stringify(baseOpts))
     });

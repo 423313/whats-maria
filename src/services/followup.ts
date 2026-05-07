@@ -106,12 +106,18 @@ async function sweepFollowups(): Promise<void> {
     // Verifica se já enviou follow-up ou se está pausada
     const { data: control } = await supabase
       .from('chat_control')
-      .select('ai_paused, followup_sent_at, instance')
+      .select('ai_paused, followup_sent_at, instance, mariana_last_manual_at')
       .eq('session_id', sessionId)
       .maybeSingle();
 
     if (control?.ai_paused) continue;         // humano no controle, não interferir
     if (control?.followup_sent_at) continue;  // já enviou follow-up nessa sessão
+
+    // Janela de 24h: Mariana enviou mensagem manual recentemente
+    if (control?.mariana_last_manual_at) {
+      const elapsed = Date.now() - new Date(control.mariana_last_manual_at).getTime();
+      if (elapsed < 24 * 60 * 60 * 1000) continue;
+    }
 
     // Busca últimas mensagens para detectar contexto
     const { data: msgs } = await supabase

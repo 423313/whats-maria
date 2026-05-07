@@ -233,6 +233,11 @@ async function handleOutgoingMessage(
     status: 'sent',
   });
 
+  // Só marca janela manual quando não é mensagem da própria Flora ecoada de volta
+  if (!pendingMatch) {
+    await updateMarianaManualAt(sessionId);
+  }
+
   logger.info(
     { session_id: sessionId, evolution_message_id: evolutionMessageId },
     'manual outgoing message persisted as assistant',
@@ -561,6 +566,31 @@ async function isAIPaused(sessionId: string): Promise<boolean> {
   return data === true;
 }
 
+async function updateMarianaManualAt(sessionId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('chat_control')
+    .update({ mariana_last_manual_at: now, updated_at: now })
+    .eq('session_id', sessionId);
+  if (error) {
+    logger.warn({ err: error.message, session_id: sessionId }, 'updateMarianaManualAt failed');
+  } else {
+    logger.info({ session_id: sessionId }, 'janela manual Mariana iniciada (24h)');
+  }
+}
+
+const MARIANA_MANUAL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+async function isWithinMarianaManualWindow(sessionId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('chat_control')
+    .select('mariana_last_manual_at')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  if (error || !data?.mariana_last_manual_at) return false;
+  return Date.now() - new Date(data.mariana_last_manual_at).getTime() < MARIANA_MANUAL_WINDOW_MS;
+}
+
 async function resolveAgentType(sessionId: string): Promise<string> {
   const { data } = await supabase
     .from('chat_control')
@@ -571,14 +601,20 @@ async function resolveAgentType(sessionId: string): Promise<string> {
 }
 
 async function flushSession(sessionId: string): Promise<void> {
-  const [paused, rows, agentType] = await Promise.all([
+  const [paused, inMarianaWindow, rows, agentType] = await Promise.all([
     isAIPaused(sessionId),
+    isWithinMarianaManualWindow(sessionId),
     peekPendingBuffer(sessionId),
     resolveAgentType(sessionId),
   ]);
 
   if (paused) {
     logger.info({ session_id: sessionId }, 'flush skipped (ai paused)');
+    return;
+  }
+
+  if (inMarianaWindow) {
+    logger.info({ session_id: sessionId }, 'flush skipped (janela manual Mariana ativa — 24h)');
     return;
   }
 

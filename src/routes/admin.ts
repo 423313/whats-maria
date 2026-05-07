@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
+import { runWeeklyReview } from '../services/weekly-review.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -133,6 +134,28 @@ export async function adminRoutes(app: FastifyInstance) {
 
     if (error) return reply.status(500).send({ error: error.message });
     return reply.send(data);
+  });
+
+  // Lista revisões semanais
+  app.get('/admin/reviews', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+    const { data, error } = await supabase
+      .from('weekly_reviews')
+      .select('*')
+      .order('week_start', { ascending: false })
+      .limit(20);
+    if (error) return reply.status(500).send({ error: error.message });
+    return reply.send(data ?? []);
+  });
+
+  // Dispara revisão manual
+  app.post('/admin/reviews/run', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+    // Roda em background para não travar o request
+    runWeeklyReview().catch((err) => {
+      console.error('manual review error', err);
+    });
+    return reply.send({ ok: true, message: 'Revisão iniciada em background. Aguarde alguns minutos.' });
   });
 
   // Atualiza o prompt

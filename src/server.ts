@@ -12,6 +12,7 @@ import {
   stopBufferSweeper,
 } from './services/buffer.js';
 import { startFollowupSweeper, stopFollowupSweeper } from './services/followup.js';
+import { startWeeklyReviewSweeper, stopWeeklyReviewSweeper } from './services/weekly-review.js';
 
 async function main() {
   const app = Fastify({
@@ -30,6 +31,7 @@ async function main() {
   initChatbot();
   startBufferSweeper();
   startFollowupSweeper();
+  startWeeklyReviewSweeper();
 
   try {
     const address = await app.listen({ port: env.PORT, host: '0.0.0.0' });
@@ -45,6 +47,7 @@ async function main() {
       await app.close();
       stopBufferSweeper();
       stopFollowupSweeper();
+      stopWeeklyReviewSweeper();
       await awaitInflightFlushes(25_000);
       process.exit(0);
     } catch (err) {

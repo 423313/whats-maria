@@ -19,6 +19,8 @@ const envSchema = z.object({
   AGENT_BUFFER_SWEEPER_MS: z.coerce.number().int().positive().default(20_000),
 
   ADMIN_PASSWORD: z.string().optional(),
+
+  REVIEW_NOTIFY_PHONE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

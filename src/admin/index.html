@@ -155,6 +155,7 @@
     <div class="sidebar-nav">
       <button class="nav-btn active" onclick="showView('sessions')" id="nav-sessions">💬 Conversas</button>
       <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt</button>
+      <button class="nav-btn" onclick="showView('reviews')" id="nav-reviews">📊 Revisões Semanais</button>
     </div>
     <div id="sessions-loading" class="sidebar-loading">Carregando...</div>
     <div id="sessions-list" class="sessions-list"></div>
@@ -185,6 +186,15 @@
         <button class="pause-btn" id="pause-btn" onclick="togglePause()">—</button>
       </div>
       <div class="chat-messages" id="chat-messages"></div>
+    </div>
+
+    <div id="reviews-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <h2 style="font-size:18px; font-weight:700;">📊 Revisões Semanais</h2>
+        <button class="btn-save" onclick="runManualReview()" id="run-review-btn" style="padding:8px 20px; font-size:13px;">▶ Rodar agora</button>
+      </div>
+      <p style="font-size:13px; color:#888; margin-bottom:24px;">Toda segunda-feira às 08h o GPT-4 analisa automaticamente todas as conversas da semana e atualiza o prompt da Maria.</p>
+      <div id="reviews-list"></div>
     </div>
 
     <div id="prompt-view">
@@ -356,6 +366,53 @@
     }
   }
 
+  // ---- REVIEWS ----
+  async function loadReviews() {
+    const res = await fetch('/admin/reviews', { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    const container = document.getElementById('reviews-list');
+    if (!data.length) {
+      container.innerHTML = '<p style="color:#bbb; font-size:14px;">Nenhuma revisão encontrada ainda. Clique em "Rodar agora" para gerar a primeira.</p>';
+      return;
+    }
+    container.innerHTML = data.map((r) => {
+      const issues = r.issues_found || [];
+      const badgeColor = issues.length === 0 ? '#22c55e' : issues.length <= 3 ? '#f59e0b' : '#ef4444';
+      const issuesHtml = issues.map((i) => `
+        <div style="background:#f9f3ee; border-left:3px solid #8b1a2e; padding:10px 14px; border-radius:0 8px 8px 0; margin-bottom:8px;">
+          <div style="font-size:12px; font-weight:700; color:#8b1a2e; margin-bottom:4px;">${escapeHtml(i.tipo?.replace(/_/g,' ') || '')} — ${escapeHtml(i.sessao || '')}</div>
+          <div style="font-size:13px; color:#444; margin-bottom:4px;">${escapeHtml(i.descricao || '')}</div>
+          <div style="font-size:12px; color:#888; font-style:italic;">"${escapeHtml(i.mensagem_problema || '')}"</div>
+          <div style="font-size:12px; color:#22c55e; margin-top:4px;">✓ ${escapeHtml(i.sugestao || '')}</div>
+        </div>`).join('');
+      return `
+        <div style="background:#fff; border-radius:12px; padding:24px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span style="font-size:16px; font-weight:700;">Semana de ${r.week_start}</span>
+            <span style="background:${badgeColor}; color:#fff; font-size:11px; padding:2px 10px; border-radius:20px; font-weight:700;">${issues.length} problema(s)</span>
+            ${r.prompt_updated ? '<span style="background:#8b1a2e; color:#fff; font-size:11px; padding:2px 10px; border-radius:20px; font-weight:700;">Prompt atualizado</span>' : ''}
+          </div>
+          <div style="font-size:13px; color:#555; margin-bottom:16px; line-height:1.6;">${escapeHtml(r.summary || 'Sem resumo disponível.')}</div>
+          <div style="font-size:12px; color:#aaa; margin-bottom:12px;">${r.sessions_count} conversa(s) · ${r.messages_count} mensagem(ns)</div>
+          ${issuesHtml || '<p style="font-size:13px; color:#22c55e;">Nenhum problema encontrado nesta semana.</p>'}
+        </div>`;
+    }).join('');
+  }
+
+  async function runManualReview() {
+    const btn = document.getElementById('run-review-btn');
+    btn.textContent = 'Analisando...';
+    btn.disabled = true;
+    const res = await fetch('/admin/reviews/run', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    btn.textContent = '▶ Rodar agora';
+    btn.disabled = false;
+    alert(data.message || 'Revisão iniciada! Aguarde alguns minutos e recarregue a página.');
+  }
+
   // ---- PROMPT ----
   async function loadPrompt() {
     document.getElementById('prompt-textarea').value = 'Carregando...';
@@ -407,6 +464,16 @@
       document.getElementById('main-title').textContent = 'Editar Prompt';
       document.getElementById('main-sub').textContent = 'Personalize o comportamento da Maria';
       loadPrompt();
+    }
+
+    document.getElementById('reviews-view').style.display = view === 'reviews' ? 'flex' : 'none';
+    document.getElementById('nav-reviews').classList.toggle('active', view === 'reviews');
+    if (view === 'reviews') {
+      document.getElementById('empty-view').style.display = 'none';
+      document.getElementById('chat-view').style.display = 'none';
+      document.getElementById('main-title').textContent = 'Revisões Semanais';
+      document.getElementById('main-sub').textContent = 'Análise automática toda segunda-feira às 08h';
+      loadReviews();
     }
   }
 

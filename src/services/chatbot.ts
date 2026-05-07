@@ -643,6 +643,7 @@ async function flushSession(sessionId: string): Promise<void> {
     'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/5.jpeg',
     'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/6.jpeg',
     'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/7.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/investimento.jpeg',
   ];
   const CARDS_TOKEN = '[CARDS_CURSO]';
 

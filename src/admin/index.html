@@ -125,6 +125,8 @@
   #empty-view p { font-size: 15px; }
 
   .loading { text-align: center; padding: 40px; color: #bbb; font-size: 14px; }
+  .pfield { display:flex; flex-direction:column; background:#f9f3ee; border-radius:8px; padding:8px 12px; font-size:13px; color:#2d2d2d; }
+  .pfield span { font-size:10px; font-weight:700; color:#8b1a2e; text-transform:uppercase; margin-bottom:2px; }
   .refresh-btn {
     background: none; border: 1px solid #ddd; padding: 6px 14px; border-radius: 6px;
     font-size: 12px; cursor: pointer; color: #666;
@@ -155,6 +157,7 @@
     <div class="sidebar-nav">
       <button class="nav-btn active" onclick="showView('sessions')" id="nav-sessions">💬 Conversas</button>
       <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt da BIA</button>
+      <button class="nav-btn" onclick="showView('pending')" id="nav-pending">⏳ Pendências</button>
       <button class="nav-btn" onclick="showView('reviews')" id="nav-reviews">📊 Revisões Semanais</button>
     </div>
     <div id="sessions-loading" class="sidebar-loading">Carregando...</div>
@@ -186,6 +189,23 @@
         <button class="pause-btn" id="pause-btn" onclick="togglePause()">—</button>
       </div>
       <div class="chat-messages" id="chat-messages"></div>
+    </div>
+
+    <div id="pending-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto; gap:0;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <h2 style="font-size:18px; font-weight:700;">⏳ Pendências</h2>
+        <div style="display:flex; gap:8px;">
+          <select id="pending-filter" onchange="loadPending()" style="padding:6px 12px; border:1.5px solid #ddd; border-radius:8px; font-size:13px; background:#fff; cursor:pointer;">
+            <option value="pendente">Pendentes</option>
+            <option value="todos">Todos</option>
+            <option value="confirmado">Confirmados</option>
+            <option value="recusado">Recusados</option>
+          </select>
+          <button class="refresh-btn" onclick="loadPending()">↻ Atualizar</button>
+        </div>
+      </div>
+      <p style="font-size:13px; color:#888; margin-bottom:20px;">Agendamentos e leads de curso que precisam da sua confirmação.</p>
+      <div id="pending-list"></div>
     </div>
 
     <div id="reviews-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto;">
@@ -366,6 +386,74 @@
     }
   }
 
+  // ---- PENDING ----
+  async function loadPending() {
+    const filter = document.getElementById('pending-filter').value;
+    const res = await fetch(`/admin/pending?status=${filter}`, { headers: { Authorization: `Bearer ${token}` } });
+    const items = await res.json();
+    const container = document.getElementById('pending-list');
+
+    if (!items.length) {
+      container.innerHTML = '<p style="color:#bbb; font-size:14px; text-align:center; padding:40px 0;">Nenhuma pendência encontrada.</p>';
+      return;
+    }
+
+    container.innerHTML = items.map((item) => {
+      const isAgendamento = item.type === 'agendamento';
+      const statusColors = { pendente: '#f59e0b', confirmado: '#22c55e', recusado: '#ef4444' };
+      const statusLabels = { pendente: 'PENDENTE', confirmado: 'CONFIRMADO', recusado: 'RECUSADO' };
+      const color = statusColors[item.status] || '#888';
+      const label = statusLabels[item.status] || item.status;
+      const phone = item.client_phone || '';
+      const formattedPhone = formatPhone(phone);
+      const timeAgo = formatTime(item.created_at);
+      const f = item.fields || {};
+
+      const detailsHtml = isAgendamento ? `
+        ${f.procedimento ? `<div class="pfield"><span>Serviço</span>${escapeHtml(f.procedimento)}</div>` : ''}
+        ${f['data_e_horário_solicitados'] ? `<div class="pfield"><span>Data solicitada</span>${escapeHtml(f['data_e_horário_solicitados'])}</div>` : ''}
+        ${f.valor ? `<div class="pfield"><span>Valor</span>${escapeHtml(f.valor)}</div>` : ''}
+        ${f.cliente ? `<div class="pfield"><span>Tipo</span>${escapeHtml(f.cliente)}</div>` : ''}
+        ${f['como_conheceu_o_studio'] ? `<div class="pfield"><span>Como conheceu</span>${escapeHtml(f['como_conheceu_o_studio'])}</div>` : ''}
+      ` : `
+        ${f['formato_preferido'] ? `<div class="pfield"><span>Formato</span>${escapeHtml(f['formato_preferido'])}</div>` : ''}
+        ${f['data_preferida'] ? `<div class="pfield"><span>Data preferida</span>${escapeHtml(f['data_preferida'])}</div>` : ''}
+        ${f['experiência'] ? `<div class="pfield"><span>Experiência</span>${escapeHtml(f['experiência'])}</div>` : ''}
+      `;
+
+      const actionsHtml = item.status === 'pendente' ? `
+        <button onclick="updatePending('${item.id}','confirmado')" style="background:#22c55e;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">✅ Confirmar</button>
+        <button onclick="updatePending('${item.id}','recusado')" style="background:#ef4444;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">❌ Recusar</button>
+      ` : `<span style="font-size:13px;color:#aaa;">Ação já realizada</span>`;
+
+      return `
+        <div style="background:#fff;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);border-left:4px solid ${color};">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;gap:12px;">
+            <div>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span style="font-size:16px;font-weight:700;">${item.client_name || formattedPhone}</span>
+                <span style="background:${isAgendamento?'#8b1a2e':'#7c3aed'};color:#fff;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700;">${isAgendamento?'📅 AGENDAMENTO':'🎓 CURSO'}</span>
+                <span style="background:${color};color:#fff;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700;">${label}</span>
+              </div>
+              <div style="font-size:12px;color:#aaa;margin-top:4px;">${formattedPhone} · ${timeAgo}</div>
+            </div>
+            <button onclick="openSession({session_id:'${item.session_id}',phone:'${phone}',total:0,ai_paused:false})" style="background:none;border:1px solid #ddd;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap;">💬 Ver conversa</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:16px;">${detailsHtml}</div>
+          <div style="display:flex;gap:10px;align-items:center;">${actionsHtml}</div>
+        </div>`;
+    }).join('');
+  }
+
+  async function updatePending(id, newStatus) {
+    await fetch(`/admin/pending/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    loadPending();
+  }
+
   // ---- REVIEWS ----
   async function loadReviews() {
     const res = await fetch('/admin/reviews', { headers: { Authorization: `Bearer ${token}` } });
@@ -464,6 +552,16 @@
       document.getElementById('main-title').textContent = 'Editar Prompt';
       document.getElementById('main-sub').textContent = 'Personalize o comportamento da BIA';
       loadPrompt();
+    }
+
+    document.getElementById('pending-view').style.display = view === 'pending' ? 'flex' : 'none';
+    document.getElementById('nav-pending').classList.toggle('active', view === 'pending');
+    if (view === 'pending') {
+      document.getElementById('empty-view').style.display = 'none';
+      document.getElementById('chat-view').style.display = 'none';
+      document.getElementById('main-title').textContent = 'Pendências';
+      document.getElementById('main-sub').textContent = 'Agendamentos e leads que precisam da sua confirmação';
+      loadPending();
     }
 
     document.getElementById('reviews-view').style.display = view === 'reviews' ? 'flex' : 'none';

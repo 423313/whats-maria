@@ -136,6 +136,33 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send(data);
   });
 
+  // Lista pendências
+  app.get('/admin/pending', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+    const { status } = (req.query as any);
+    let query = supabase
+      .from('pending_actions')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (status && status !== 'todos') query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) return reply.status(500).send({ error: error.message });
+    return reply.send(data ?? []);
+  });
+
+  // Atualiza status de uma pendência
+  app.patch('/admin/pending/:id', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+    const { id } = req.params as { id: string };
+    const { status } = req.body as { status: string };
+    const { error } = await supabase
+      .from('pending_actions')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) return reply.status(500).send({ error: error.message });
+    return reply.send({ ok: true });
+  });
+
   // Lista revisões semanais
   app.get('/admin/reviews', async (req, reply) => {
     if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });

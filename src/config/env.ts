@@ -21,6 +21,7 @@ const envSchema = z.object({
   ADMIN_PASSWORD: z.string().optional(),
 
   REVIEW_NOTIFY_PHONE: z.string().optional(),
+  MARIANA_NOTIFY_PHONE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

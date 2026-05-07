@@ -1,5 +1,6 @@
 import { getEvolutionClient, EvolutionError } from '../lib/evolution.js';
 import { logger } from '../lib/logger.js';
+import { env } from '../config/env.js';
 import { phoneToSessionId } from '../lib/phone.js';
 import { supabase } from '../lib/supabase.js';
 import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-config.js';
@@ -707,6 +708,12 @@ async function flushSession(sessionId: string): Promise<void> {
         }
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);
+
+      // Último bloco — verifica se há resumo de pendência
+      if (i === mensagens.length - 1) {
+        const allText = mensagens.join('\n');
+        void handlePendingActions(sessionId, allText);
+      }
     } catch (err) {
       const errorDetails =
         err instanceof EvolutionError
@@ -733,6 +740,103 @@ async function flushSession(sessionId: string): Promise<void> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ─── Detecção e notificação de pendências ─────────────────────────────────────
+
+function parseFields(block: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const line of block.split('\n')) {
+    const sep = line.indexOf(':');
+    if (sep === -1) continue;
+    const key = line.slice(0, sep).trim().toLowerCase().replace(/\s+/g, '_');
+    const val = line.slice(sep + 1).trim();
+    if (key && val) fields[key] = val;
+  }
+  return fields;
+}
+
+function extractClientName(fields: Record<string, string>): string {
+  return fields['nome_da_cliente'] ?? fields['nome'] ?? '';
+}
+
+async function handlePendingActions(
+  sessionId: string,
+  allText: string,
+): Promise<void> {
+  const phone = sessionId.replace('@s.whatsapp.net', '');
+
+  const agendamentoMatch = allText.match(
+    /---\s*SOLICITAÇÃO DE AGENDAMENTO\s*---([\s\S]*?)---+/,
+  );
+  const cursoMatch = allText.match(/---\s*LEAD DE CURSO\s*---([\s\S]*?)---+/);
+
+  const match = agendamentoMatch ?? cursoMatch;
+  if (!match) return;
+
+  const type: 'agendamento' | 'curso' = agendamentoMatch ? 'agendamento' : 'curso';
+  const rawBlock = match[0]!;
+  const fields = parseFields(match[1]!);
+  const clientName = extractClientName(fields);
+
+  // Salva no banco (ignora duplicata para a mesma sessão+tipo no mesmo dia)
+  const today = new Date().toISOString().split('T')[0];
+  const { data: existing } = await supabase
+    .from('pending_actions')
+    .select('id')
+    .eq('session_id', sessionId)
+    .eq('type', type)
+    .gte('created_at', `${today}T00:00:00Z`)
+    .maybeSingle();
+
+  if (!existing) {
+    await supabase.from('pending_actions').insert({
+      session_id: sessionId,
+      type,
+      client_name: clientName || null,
+      client_phone: phone,
+      summary: rawBlock.trim(),
+      fields,
+      status: 'pendente',
+    });
+  }
+
+  // Notifica Mariana via WhatsApp
+  if (!env.MARIANA_NOTIFY_PHONE || !env.EVOLUTION_INSTANCE) return;
+
+  try {
+    const evolution = getEvolutionClient();
+    const emoji = type === 'agendamento' ? '📅' : '🎓';
+    const label = type === 'agendamento' ? 'Agendamento' : 'Lead de curso';
+    const lines: string[] = [
+      `${emoji} Nova solicitação — ${label}`,
+      clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`,
+    ];
+
+    if (type === 'agendamento') {
+      if (fields['procedimento']) lines.push(`Serviço: ${fields['procedimento']}`);
+      if (fields['data_e_horário_solicitados']) lines.push(`Data: ${fields['data_e_horário_solicitados']}`);
+      if (fields['valor']) lines.push(`Valor: ${fields['valor']}`);
+      if (fields['cliente']) lines.push(`Cliente: ${fields['cliente']}`);
+    } else {
+      if (fields['formato_preferido']) lines.push(`Formato: ${fields['formato_preferido']}`);
+      if (fields['data_preferida']) lines.push(`Data preferida: ${fields['data_preferida']}`);
+      if (fields['experiência']) lines.push(`Experiência: ${fields['experiência']}`);
+    }
+
+    lines.push(`WhatsApp: ${phone}`);
+    lines.push(`Acesse o painel para confirmar ou recusar.`);
+
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) await delay(800);
+      await evolution.sendText(env.EVOLUTION_INSTANCE, env.MARIANA_NOTIFY_PHONE, lines[i]!);
+    }
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'notificação Mariana falhou',
+    );
+  }
 }
 
 export function initChatbot(): void {

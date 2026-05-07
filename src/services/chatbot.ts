@@ -632,8 +632,13 @@ async function flushSession(sessionId: string): Promise<void> {
     mensagens = ['oi, tive um probleminha agora pra te responder, me dá só um instante que eu já volto'];
   }
 
+  const TABELA_PRECOS_URL = 'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/precos.jpeg';
+  const TABELA_TOKEN = '[TABELA_PRECOS]';
+
   for (let i = 0; i < mensagens.length; i++) {
-    const text = mensagens[i]!;
+    const rawText = mensagens[i]!;
+    const hasTabela = rawText.includes(TABELA_TOKEN);
+    const text = rawText.replace(TABELA_TOKEN, '').trim();
     const pendingId = await persistAssistantPending({
       sessionId,
       instance,
@@ -672,9 +677,15 @@ async function flushSession(sessionId: string): Promise<void> {
     try {
       await evolution.sendPresence(instance, sessionId, 'composing', typingMs);
       await delay(typingMs);
-      const result = await evolution.sendText(instance, sessionId, text);
-      if (pendingId) {
-        await markAssistantSent(pendingId, result.messageId || null);
+      if (text) {
+        const result = await evolution.sendText(instance, sessionId, text);
+        if (pendingId) {
+          await markAssistantSent(pendingId, result.messageId || null);
+        }
+      }
+      if (hasTabela) {
+        await delay(interMsgMs);
+        await evolution.sendMedia(instance, sessionId, TABELA_PRECOS_URL);
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);
     } catch (err) {

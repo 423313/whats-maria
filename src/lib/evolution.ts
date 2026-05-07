@@ -93,6 +93,51 @@ export class EvolutionClient {
     return { messageId, raw: json };
   }
 
+  async sendMedia(
+    instance: string,
+    to: string,
+    mediaUrl: string,
+    caption = '',
+  ): Promise<SendTextResult> {
+    const number = normalizePhone(to);
+    if (!number) throw new Error(`invalid phone: ${to}`);
+
+    const url = `${this.baseUrl}/message/sendMedia/${encodeURIComponent(instance)}`;
+    const body = { number, mediatype: 'image', media: mediaUrl, caption };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: this.apiKey },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      logger.warn(
+        { status: response.status, body: responseText, instance, to: number },
+        'evolution sendMedia failed',
+      );
+      throw new EvolutionError(
+        `Evolution sendMedia failed: ${response.status}`,
+        response.status,
+        responseText,
+      );
+    }
+
+    let json: unknown;
+    try { json = JSON.parse(responseText); } catch { json = { raw: responseText }; }
+    return { messageId: extractMessageId(json), raw: json };
+  }
+
   async sendPresence(
     instance: string,
     to: string,

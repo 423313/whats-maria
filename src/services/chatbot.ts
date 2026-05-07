@@ -635,10 +635,22 @@ async function flushSession(sessionId: string): Promise<void> {
   const TABELA_PRECOS_URL = 'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/precos.jpeg';
   const TABELA_TOKEN = '[TABELA_PRECOS]';
 
+  const CARDS_CURSO_URLS = [
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/1.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/2.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/3.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/4.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/5.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/6.jpeg',
+    'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/7.jpeg',
+  ];
+  const CARDS_TOKEN = '[CARDS_CURSO]';
+
   for (let i = 0; i < mensagens.length; i++) {
     const rawText = mensagens[i]!;
     const hasTabela = rawText.includes(TABELA_TOKEN);
-    const text = rawText.replace(TABELA_TOKEN, '').trim();
+    const hasCards = rawText.includes(CARDS_TOKEN);
+    const text = rawText.replace(TABELA_TOKEN, '').replace(CARDS_TOKEN, '').trim();
     const pendingId = await persistAssistantPending({
       sessionId,
       instance,
@@ -686,6 +698,12 @@ async function flushSession(sessionId: string): Promise<void> {
       if (hasTabela) {
         await delay(interMsgMs);
         await evolution.sendMedia(instance, sessionId, TABELA_PRECOS_URL);
+      }
+      if (hasCards) {
+        for (const cardUrl of CARDS_CURSO_URLS) {
+          await delay(interMsgMs);
+          await evolution.sendMedia(instance, sessionId, cardUrl);
+        }
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);
     } catch (err) {

@@ -48,7 +48,7 @@ async function analyzeConversations(
     .join('\n\n');
 
   const systemPrompt = `Você é um especialista em atendimento ao cliente e qualidade de chatbots.
-Sua missão é revisar conversas de um atendimento virtual chamado Maria, que trabalha para o Studio Mariana Castro (studio de unhas em Curitiba/PR).
+Sua missão é revisar conversas de um atendimento virtual chamado BIA, que trabalha para o Studio Mariana Castro (studio de unhas em Curitiba/PR).
 
 Analise CADA conversa com atenção máxima e identifique:
 1. Informações incorretas fornecidas pela Maria (dados inventados, valores errados, horários errados)
@@ -113,7 +113,7 @@ function buildWhatsAppReport(
 ): string[] {
   const messages: string[] = [];
 
-  messages.push(`Revisão semanal da Maria — semana de ${weekStart}`);
+  messages.push(`Revisão semanal da BIA — semana de ${weekStart}`);
   messages.push(`${sessionsCount} conversa(s) analisada(s), ${messagesCount} mensagens no total.`);
 
   if (result.summary) {

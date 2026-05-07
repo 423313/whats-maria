@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Studio Mariana Castro — Admin</title>
+<title>Studio Mariana Castro — BIA Admin</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; min-height: 100vh; }
@@ -138,7 +138,7 @@
 <div id="login-screen">
   <div class="login-card">
     <h1>Studio Mariana Castro</h1>
-    <p>Painel de atendimentos da Maria</p>
+    <p>Painel de atendimentos da BIA</p>
     <input type="password" id="password-input" placeholder="Senha de acesso" />
     <button onclick="doLogin()">Entrar</button>
     <div id="login-error" class="login-error"></div>
@@ -150,11 +150,11 @@
   <div class="sidebar">
     <div class="sidebar-header">
       <h2>Mariana Castro</h2>
-      <p>Painel Admin — Maria IA</p>
+      <p>Painel Admin — BIA</p>
     </div>
     <div class="sidebar-nav">
       <button class="nav-btn active" onclick="showView('sessions')" id="nav-sessions">💬 Conversas</button>
-      <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt</button>
+      <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt da BIA</button>
       <button class="nav-btn" onclick="showView('reviews')" id="nav-reviews">📊 Revisões Semanais</button>
     </div>
     <div id="sessions-loading" class="sidebar-loading">Carregando...</div>
@@ -193,12 +193,12 @@
         <h2 style="font-size:18px; font-weight:700;">📊 Revisões Semanais</h2>
         <button class="btn-save" onclick="runManualReview()" id="run-review-btn" style="padding:8px 20px; font-size:13px;">▶ Rodar agora</button>
       </div>
-      <p style="font-size:13px; color:#888; margin-bottom:24px;">Toda segunda-feira às 08h o GPT-4 analisa automaticamente todas as conversas da semana e atualiza o prompt da Maria.</p>
+      <p style="font-size:13px; color:#888; margin-bottom:24px;">Toda segunda-feira às 08h o GPT-4 analisa automaticamente todas as conversas da semana e atualiza o prompt da BIA.</p>
       <div id="reviews-list"></div>
     </div>
 
     <div id="prompt-view">
-      <h2>✏️ Editar Prompt da Maria</h2>
+      <h2>✏️ Editar Prompt da BIA da Maria</h2>
       <p>Qualquer alteração entra em vigor em até 30 segundos, sem precisar reiniciar o servidor.</p>
       <textarea id="prompt-textarea" placeholder="Carregando prompt..."></textarea>
       <div class="prompt-actions">
@@ -462,7 +462,7 @@
       document.getElementById('empty-view').style.display = 'none';
       document.getElementById('chat-view').style.display = 'none';
       document.getElementById('main-title').textContent = 'Editar Prompt';
-      document.getElementById('main-sub').textContent = 'Personalize o comportamento da Maria';
+      document.getElementById('main-sub').textContent = 'Personalize o comportamento da BIA';
       loadPrompt();
     }
 

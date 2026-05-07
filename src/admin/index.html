@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studio Mariana Castro — Admin</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f0eb; color: #2d2d2d; min-height: 100vh; }
+
+  /* LOGIN */
+  #login-screen {
+    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    background: linear-gradient(135deg, #8b1a2e 0%, #c0475a 100%);
+  }
+  .login-card {
+    background: #fff; border-radius: 16px; padding: 40px 48px; text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2); width: 360px;
+  }
+  .login-card h1 { font-size: 22px; color: #8b1a2e; margin-bottom: 4px; }
+  .login-card p { font-size: 13px; color: #888; margin-bottom: 28px; }
+  .login-card input {
+    width: 100%; padding: 12px 16px; border: 1.5px solid #ddd; border-radius: 8px;
+    font-size: 15px; margin-bottom: 16px; outline: none;
+  }
+  .login-card input:focus { border-color: #8b1a2e; }
+  .login-card button {
+    width: 100%; padding: 12px; background: #8b1a2e; color: #fff; border: none;
+    border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .login-card button:hover { background: #a01f35; }
+  .login-error { color: #c0392b; font-size: 13px; margin-top: 10px; }
+
+  /* APP */
+  #app { display: none; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 280px;
+    background: #fff; border-right: 1px solid #e8e0d8; overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  .sidebar-header {
+    padding: 20px 20px 16px; border-bottom: 1px solid #e8e0d8;
+    background: #8b1a2e; color: #fff;
+  }
+  .sidebar-header h2 { font-size: 16px; font-weight: 700; }
+  .sidebar-header p { font-size: 11px; opacity: 0.75; margin-top: 2px; }
+  .sidebar-nav { padding: 12px 0; border-bottom: 1px solid #e8e0d8; }
+  .nav-btn {
+    display: block; width: 100%; padding: 10px 20px; background: none; border: none;
+    text-align: left; font-size: 14px; cursor: pointer; color: #444;
+    font-weight: 500;
+  }
+  .nav-btn:hover { background: #f9f3ee; color: #8b1a2e; }
+  .nav-btn.active { background: #fdf0f2; color: #8b1a2e; border-right: 3px solid #8b1a2e; }
+  .sessions-list { flex: 1; overflow-y: auto; }
+  .session-item {
+    padding: 14px 20px; cursor: pointer; border-bottom: 1px solid #f0e8e0;
+    transition: background 0.15s;
+  }
+  .session-item:hover { background: #fdf8f5; }
+  .session-item.active { background: #fdf0f2; border-right: 3px solid #8b1a2e; }
+  .session-phone { font-size: 14px; font-weight: 600; color: #2d2d2d; }
+  .session-preview { font-size: 12px; color: #999; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .session-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .badge-paused { background: #ff4444; color: #fff; font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 700; }
+  .badge-active { background: #22c55e; color: #fff; font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 700; }
+  .badge-count { font-size: 11px; color: #bbb; }
+  .sidebar-loading { padding: 20px; text-align: center; color: #bbb; font-size: 13px; }
+
+  /* MAIN */
+  .main { margin-left: 280px; min-height: 100vh; display: flex; flex-direction: column; }
+  .main-header {
+    padding: 20px 32px; background: #fff; border-bottom: 1px solid #e8e0d8;
+    display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10;
+  }
+  .main-header h1 { font-size: 18px; font-weight: 700; color: #2d2d2d; }
+  .main-header .sub { font-size: 13px; color: #999; margin-top: 2px; }
+
+  /* CHAT VIEW */
+  #chat-view { display: none; flex-direction: column; flex: 1; }
+  .chat-header { padding: 16px 32px; background: #fff; border-bottom: 1px solid #e8e0d8; display: flex; align-items: center; justify-content: space-between; }
+  .chat-title { font-size: 16px; font-weight: 700; }
+  .chat-subtitle { font-size: 12px; color: #888; margin-top: 2px; }
+  .pause-btn {
+    padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .pause-btn.pause { background: #ff4444; color: #fff; }
+  .pause-btn.resume { background: #22c55e; color: #fff; }
+  .pause-btn:hover { opacity: 0.85; }
+  .chat-messages { flex: 1; padding: 24px 32px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 70%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; word-break: break-word; }
+  .msg.user { background: #fff; border: 1px solid #e0d8d0; align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg.assistant { background: #8b1a2e; color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg-time { font-size: 10px; opacity: 0.6; margin-top: 4px; }
+  .msg-wrapper { display: flex; flex-direction: column; }
+  .msg-wrapper.user { align-items: flex-start; }
+  .msg-wrapper.assistant { align-items: flex-end; }
+  .chat-empty { text-align: center; color: #ccc; padding: 60px 32px; font-size: 14px; }
+
+  /* PROMPT VIEW */
+  #prompt-view { display: none; flex-direction: column; flex: 1; padding: 32px; }
+  #prompt-view h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  #prompt-view p { font-size: 13px; color: #888; margin-bottom: 20px; }
+  #prompt-textarea {
+    flex: 1; width: 100%; min-height: 500px; padding: 16px; border: 1.5px solid #ddd;
+    border-radius: 10px; font-size: 13px; font-family: 'Courier New', monospace;
+    line-height: 1.6; resize: vertical; outline: none; background: #fff;
+  }
+  #prompt-textarea:focus { border-color: #8b1a2e; }
+  .prompt-actions { display: flex; gap: 12px; margin-top: 16px; align-items: center; }
+  .btn-save {
+    padding: 10px 28px; background: #8b1a2e; color: #fff; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-save:hover { background: #a01f35; }
+  .save-status { font-size: 13px; color: #22c55e; font-weight: 500; }
+  .save-error { font-size: 13px; color: #ff4444; font-weight: 500; }
+
+  /* EMPTY STATE */
+  #empty-view {
+    display: flex; align-items: center; justify-content: center; flex: 1;
+    flex-direction: column; gap: 12px; color: #ccc;
+  }
+  #empty-view svg { width: 64px; height: 64px; opacity: 0.3; }
+  #empty-view p { font-size: 15px; }
+
+  .loading { text-align: center; padding: 40px; color: #bbb; font-size: 14px; }
+  .refresh-btn {
+    background: none; border: 1px solid #ddd; padding: 6px 14px; border-radius: 6px;
+    font-size: 12px; cursor: pointer; color: #666;
+  }
+  .refresh-btn:hover { background: #f5f0eb; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <h1>Studio Mariana Castro</h1>
+    <p>Painel de atendimentos da Maria</p>
+    <input type="password" id="password-input" placeholder="Senha de acesso" />
+    <button onclick="doLogin()">Entrar</button>
+    <div id="login-error" class="login-error"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>Mariana Castro</h2>
+      <p>Painel Admin — Maria IA</p>
+    </div>
+    <div class="sidebar-nav">
+      <button class="nav-btn active" onclick="showView('sessions')" id="nav-sessions">💬 Conversas</button>
+      <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt</button>
+    </div>
+    <div id="sessions-loading" class="sidebar-loading">Carregando...</div>
+    <div id="sessions-list" class="sessions-list"></div>
+  </div>
+
+  <div class="main">
+    <div class="main-header">
+      <div>
+        <div class="main-header h1" id="main-title" style="font-size:18px;font-weight:700;">Conversas</div>
+        <div class="sub" id="main-sub">Selecione uma conversa para visualizar</div>
+      </div>
+      <button class="refresh-btn" onclick="refreshSessions()">↻ Atualizar</button>
+    </div>
+
+    <div id="empty-view" style="display:flex;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+      </svg>
+      <p>Selecione uma conversa</p>
+    </div>
+
+    <div id="chat-view">
+      <div class="chat-header">
+        <div>
+          <div class="chat-title" id="chat-title">—</div>
+          <div class="chat-subtitle" id="chat-subtitle">—</div>
+        </div>
+        <button class="pause-btn" id="pause-btn" onclick="togglePause()">—</button>
+      </div>
+      <div class="chat-messages" id="chat-messages"></div>
+    </div>
+
+    <div id="prompt-view">
+      <h2>✏️ Editar Prompt da Maria</h2>
+      <p>Qualquer alteração entra em vigor em até 30 segundos, sem precisar reiniciar o servidor.</p>
+      <textarea id="prompt-textarea" placeholder="Carregando prompt..."></textarea>
+      <div class="prompt-actions">
+        <button class="btn-save" onclick="savePrompt()">Salvar alterações</button>
+        <span id="save-status"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let token = localStorage.getItem('admin_token') || '';
+  let currentSession = null;
+  let currentPaused = false;
+  let sessions = [];
+
+  // ---- LOGIN ----
+  async function doLogin() {
+    const pw = document.getElementById('password-input').value;
+    const res = await fetch('/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      token = pw;
+      localStorage.setItem('admin_token', pw);
+      showApp();
+    } else {
+      document.getElementById('login-error').textContent = 'Senha incorreta.';
+    }
+  }
+
+  document.getElementById('password-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  });
+
+  function showApp() {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadSessions();
+  }
+
+  // Se já tem token, tenta ir direto pro app
+  if (token) {
+    fetch('/admin/sessions', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => { if (r.ok) showApp(); else localStorage.removeItem('admin_token'); })
+      .catch(() => {});
+  }
+
+  // ---- SESSIONS ----
+  async function loadSessions() {
+    document.getElementById('sessions-loading').style.display = 'block';
+    document.getElementById('sessions-list').innerHTML = '';
+
+    const res = await fetch('/admin/sessions', { headers: { Authorization: `Bearer ${token}` } });
+    sessions = await res.json();
+
+    document.getElementById('sessions-loading').style.display = 'none';
+
+    if (!sessions.length) {
+      document.getElementById('sessions-list').innerHTML = '<div class="sidebar-loading">Nenhuma conversa ainda.</div>';
+      return;
+    }
+
+    const list = document.getElementById('sessions-list');
+    for (const s of sessions) {
+      const el = document.createElement('div');
+      el.className = 'session-item';
+      el.id = `session-${s.session_id}`;
+      el.onclick = () => openSession(s);
+      const phone = formatPhone(s.phone);
+      const preview = s.last_message?.slice(0, 60) || '';
+      const timeAgo = formatTime(s.last_at);
+      el.innerHTML = `
+        <div class="session-phone">${phone}</div>
+        <div class="session-preview">${escapeHtml(preview)}</div>
+        <div class="session-meta">
+          <span class="${s.ai_paused ? 'badge-paused' : 'badge-active'}">${s.ai_paused ? 'PAUSADA' : 'ATIVA'}</span>
+          <span class="badge-count">${s.total} msgs · ${timeAgo}</span>
+        </div>`;
+      list.appendChild(el);
+    }
+  }
+
+  function refreshSessions() { loadSessions(); }
+
+  // ---- OPEN SESSION ----
+  async function openSession(s) {
+    currentSession = s.session_id;
+    currentPaused = s.ai_paused;
+
+    document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
+    const el = document.getElementById(`session-${s.session_id}`);
+    if (el) el.classList.add('active');
+
+    showView('sessions');
+    document.getElementById('empty-view').style.display = 'none';
+    const chatView = document.getElementById('chat-view');
+    chatView.style.display = 'flex';
+
+    document.getElementById('chat-title').textContent = formatPhone(s.phone);
+    document.getElementById('chat-subtitle').textContent = `${s.total} mensagens · ${s.session_id}`;
+    updatePauseBtn();
+
+    document.getElementById('chat-messages').innerHTML = '<div class="loading">Carregando mensagens...</div>';
+
+    const res = await fetch(`/admin/sessions/${encodeURIComponent(s.session_id)}/messages`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const msgs = await res.json();
+
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+
+    if (!msgs.length) {
+      container.innerHTML = '<div class="chat-empty">Nenhuma mensagem encontrada.</div>';
+      return;
+    }
+
+    for (const msg of msgs) {
+      const wrapper = document.createElement('div');
+      wrapper.className = `msg-wrapper ${msg.role}`;
+      const time = new Date(msg.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+      wrapper.innerHTML = `
+        <div class="msg ${msg.role}">${escapeHtml(msg.content)}</div>
+        <div class="msg-time">${msg.role === 'user' ? '👤 Cliente' : '🤖 Maria'} · ${time}</div>`;
+      container.appendChild(wrapper);
+    }
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function updatePauseBtn() {
+    const btn = document.getElementById('pause-btn');
+    if (currentPaused) {
+      btn.textContent = '▶ Retomar Maria';
+      btn.className = 'pause-btn resume';
+    } else {
+      btn.textContent = '⏸ Pausar Maria';
+      btn.className = 'pause-btn pause';
+    }
+  }
+
+  async function togglePause() {
+    if (!currentSession) return;
+    const newPaused = !currentPaused;
+    await fetch(`/admin/sessions/${encodeURIComponent(currentSession)}/pause`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ paused: newPaused }),
+    });
+    currentPaused = newPaused;
+    updatePauseBtn();
+
+    // Atualiza badge na sidebar
+    const s = sessions.find(x => x.session_id === currentSession);
+    if (s) {
+      s.ai_paused = newPaused;
+      const badge = document.querySelector(`#session-${CSS.escape(currentSession)} .badge-paused, #session-${CSS.escape(currentSession)} .badge-active`);
+      if (badge) {
+        badge.className = newPaused ? 'badge-paused' : 'badge-active';
+        badge.textContent = newPaused ? 'PAUSADA' : 'ATIVA';
+      }
+    }
+  }
+
+  // ---- PROMPT ----
+  async function loadPrompt() {
+    document.getElementById('prompt-textarea').value = 'Carregando...';
+    const res = await fetch('/admin/config', { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    document.getElementById('prompt-textarea').value = data.system_prompt || '';
+  }
+
+  async function savePrompt() {
+    const prompt = document.getElementById('prompt-textarea').value;
+    const statusEl = document.getElementById('save-status');
+    statusEl.className = '';
+    statusEl.textContent = 'Salvando...';
+
+    const res = await fetch('/admin/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ system_prompt: prompt }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      statusEl.className = 'save-status';
+      statusEl.textContent = '✓ Salvo com sucesso!';
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    } else {
+      statusEl.className = 'save-error';
+      statusEl.textContent = '✗ Erro ao salvar: ' + (data.error || 'desconhecido');
+    }
+  }
+
+  // ---- NAV ----
+  function showView(view) {
+    document.getElementById('nav-sessions').classList.toggle('active', view === 'sessions');
+    document.getElementById('nav-prompt').classList.toggle('active', view === 'prompt');
+    document.getElementById('prompt-view').style.display = view === 'prompt' ? 'flex' : 'none';
+
+    if (view === 'sessions') {
+      document.getElementById('main-title').textContent = 'Conversas';
+      document.getElementById('main-sub').textContent = 'Selecione uma conversa para visualizar';
+      if (!currentSession) {
+        document.getElementById('empty-view').style.display = 'flex';
+        document.getElementById('chat-view').style.display = 'none';
+      }
+    }
+
+    if (view === 'prompt') {
+      document.getElementById('empty-view').style.display = 'none';
+      document.getElementById('chat-view').style.display = 'none';
+      document.getElementById('main-title').textContent = 'Editar Prompt';
+      document.getElementById('main-sub').textContent = 'Personalize o comportamento da Maria';
+      loadPrompt();
+    }
+  }
+
+  // ---- HELPERS ----
+  function formatPhone(phone) {
+    if (!phone) return 'Desconhecido';
+    const d = phone.replace(/\D/g, '');
+    if (d.length === 13) return `+${d.slice(0,2)} (${d.slice(2,4)}) ${d.slice(4,9)}-${d.slice(9)}`;
+    if (d.length === 12) return `+${d.slice(0,2)} (${d.slice(2,4)}) ${d.slice(4,8)}-${d.slice(8)}`;
+    return phone;
+  }
+
+  function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return 'agora';
+    if (diff < 3600) return `${Math.floor(diff/60)}min atrás`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h atrás`;
+    return d.toLocaleDateString('pt-BR');
+  }
+
+  function escapeHtml(str) {
+    return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  }
+</script>
+</body>
+</html>

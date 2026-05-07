@@ -17,6 +17,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
 
   AGENT_BUFFER_SWEEPER_MS: z.coerce.number().int().positive().default(20_000),
+
+  ADMIN_PASSWORD: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

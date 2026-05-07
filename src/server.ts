@@ -4,6 +4,7 @@ import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { healthRoutes } from './routes/health.js';
 import { evolutionWebhookRoutes } from './routes/webhooks/evolution.js';
+import { adminRoutes } from './routes/admin.js';
 import { initChatbot } from './services/chatbot.js';
 import {
   awaitInflightFlushes,
@@ -23,6 +24,7 @@ async function main() {
   await app.register(sensible);
   await app.register(healthRoutes);
   await app.register(evolutionWebhookRoutes);
+  await app.register(adminRoutes);
 
   initChatbot();
   startBufferSweeper();

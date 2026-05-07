@@ -19,7 +19,7 @@ function checkAuth(req: { headers: Record<string, string | string[] | undefined>
 export async function adminRoutes(app: FastifyInstance) {
   // Serve o HTML do painel
   app.get('/admin', async (_req, reply) => {
-    const htmlPath = join(__dirname, '../../src/admin/index.html');
+    const htmlPath = join(__dirname, '../admin/index.html');
     const html = readFileSync(htmlPath, 'utf-8');
     return reply.type('text/html').send(html);
   });

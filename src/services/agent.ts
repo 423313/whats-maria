@@ -75,15 +75,36 @@ async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow
   return ((data ?? []) as HistoryRow[]).reverse();
 }
 
+const WEEKDAY_PT = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+function buildDateContext(): string {
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const weekday = WEEKDAY_PT[now.getDay()];
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const hour = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  return (
+    `[CONTEXTO DO SISTEMA — leia antes de qualquer coisa]\n` +
+    `Data e hora atual: ${weekday}, ${day}/${month}/${year} às ${hour}:${min} (horário de Brasília).\n` +
+    `Use essa informação quando a cliente perguntar sobre "hoje", "agora" ou disponibilidade do dia.\n`
+  );
+}
+
 function buildSystemMessage(config: AgentConfig, clientName?: string | null): string {
-  if (!clientName?.trim()) return config.system_prompt;
+  const dateContext = buildDateContext();
 
-  const contextBlock =
-    `[CONTEXTO DA SESSÃO — leia antes de qualquer coisa]\n` +
+  if (!clientName?.trim()) {
+    return dateContext + '\n' + config.system_prompt;
+  }
+
+  const sessionContext =
+    `[CONTEXTO DA SESSÃO]\n` +
     `Esta cliente já se identificou anteriormente. Nome: ${clientName.trim()}.\n` +
-    `USE esse nome quando for natural. NÃO peça o nome novamente — você já sabe.\n\n`;
+    `USE esse nome quando for natural. NÃO peça o nome novamente — você já sabe.\n`;
 
-  return contextBlock + config.system_prompt;
+  return dateContext + '\n' + sessionContext + '\n' + config.system_prompt;
 }
 
 async function loadClientName(sessionId: string): Promise<string | null> {

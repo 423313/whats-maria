@@ -70,6 +70,16 @@ export async function handleEvolutionWebhook(
   const data = payload.data ?? {};
 
   if (event === 'messages.update') {
+    // Belt-and-suspenders: se o update veio de uma mensagem da Mariana (fromMe),
+    // ativa a janela de 24h imediatamente — independente do restante do processamento.
+    if (data.fromMe === true) {
+      const updateJid = data.key?.remoteJid ?? data.remoteJid ?? '';
+      if (updateJid.endsWith('@s.whatsapp.net')) {
+        const updateSessionId = phoneToSessionId(updateJid.replace('@s.whatsapp.net', ''));
+        void updateMarianaManualAt(updateSessionId);
+      }
+    }
+
     const isEdit =
       data.status === 'SERVER_ACK' && !!data.editedMessage && data.fromMe !== true;
     if (isEdit) {
@@ -168,20 +178,26 @@ async function handleOutgoingMessage(
   data: NonNullable<EvolutionWebhookPayload['data']>,
   instance: string,
 ): Promise<{ status: string; reason?: string }> {
-  const evolutionMessageId = data.key?.id ?? null;
-  if (!evolutionMessageId) {
-    return { status: 'ignored', reason: 'from_me_no_id' };
-  }
-
+  // ─── 1. Valida remoteJid (único campo imprescindível para saber a sessão) ───
   const remoteJid = data.key?.remoteJid ?? '';
   if (!remoteJid.endsWith('@s.whatsapp.net')) {
     return { status: 'ignored', reason: 'from_me_invalid_jid' };
   }
 
-  // Resolve sessionId aqui para que QUALQUER mídia da Mariana (áudio, imagem, vídeo…)
-  // ative a janela manual, mesmo que não seja texto extraível.
+  // ─── 2. Ativa janela de 24h IMEDIATAMENTE ────────────────────────────────────
+  // Qualquer mensagem da Mariana (áudio, imagem, vídeo, texto, sticker…)
+  // bloqueia a Flora por 24h. Isso deve acontecer antes de qualquer outro
+  // return, inclusive before validações de evolutionMessageId ou duplicata.
   const sessionId = phoneToSessionId(remoteJid.replace('@s.whatsapp.net', ''));
+  await updateMarianaManualAt(sessionId);
 
+  // ─── 3. Valida id da mensagem ────────────────────────────────────────────────
+  const evolutionMessageId = data.key?.id ?? null;
+  if (!evolutionMessageId) {
+    return { status: 'ignored', reason: 'from_me_no_id' };
+  }
+
+  // ─── 4. Checa duplicata ──────────────────────────────────────────────────────
   const { data: existing } = await supabase
     .from('chat_messages')
     .select('id')
@@ -191,17 +207,18 @@ async function handleOutgoingMessage(
     return { status: 'ignored', reason: 'from_me_already_persisted' };
   }
 
+  // ─── 5. Extrai texto (para mensagens manuais de texto da Mariana) ────────────
   const { messageType, message } = unwrapEphemeral(
     data.messageType ?? '',
     data.message ?? {},
   );
   const text = extractText(messageType, message);
   if (!text) {
-    // Áudio, imagem, vídeo ou qualquer mídia enviada pela Mariana → ativa janela manual
-    await updateMarianaManualAt(sessionId);
+    // Áudio, imagem, vídeo, sticker — janela já foi ativada no passo 2.
     return { status: 'ignored', reason: 'from_me_non_text' };
   }
 
+  // ─── 6. Tenta promover mensagem pending da própria Flora (echo) ──────────────
   const pendingCutoff = new Date(Date.now() - 60_000).toISOString();
   const { data: pendingMatch } = await supabase
     .from('chat_messages')
@@ -236,6 +253,7 @@ async function handleOutgoingMessage(
     }
   }
 
+  // ─── 7. Persiste texto manual da Mariana ─────────────────────────────────────
   await persistAssistantMessage({
     sessionId,
     instance,
@@ -244,11 +262,6 @@ async function handleOutgoingMessage(
     evolutionMessageId,
     status: 'sent',
   });
-
-  // Só marca janela manual quando não é mensagem da própria Flora ecoada de volta
-  if (!pendingMatch) {
-    await updateMarianaManualAt(sessionId);
-  }
 
   logger.info(
     { session_id: sessionId, evolution_message_id: evolutionMessageId },

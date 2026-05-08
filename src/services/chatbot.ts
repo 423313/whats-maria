@@ -749,6 +749,16 @@ async function flushSession(sessionId: string): Promise<void> {
   const CARDS_TOKEN = '[CARDS_CURSO]';
 
   for (let i = 0; i < mensagens.length; i++) {
+    // A cada mensagem (exceto a primeira que já foi checada), verifica se Mariana
+    // assumiu o chat durante o envio — para imediatamente se a janela foi ativada.
+    if (i > 0 && (await isWithinMarianaManualWindow(sessionId))) {
+      logger.info(
+        { session_id: sessionId, stopped_at: i },
+        'flush interrompido mid-sequence (Mariana assumiu durante o envio)',
+      );
+      break;
+    }
+
     const rawText = mensagens[i]!;
     const hasTabela = rawText.includes(TABELA_TOKEN);
     const hasCards = rawText.includes(CARDS_TOKEN);

@@ -16,7 +16,104 @@ import { env } from '../config/env.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 import { logger } from '../lib/logger.js';
 import { supabase } from '../lib/supabase.js';
+import { loadAgentConfig, resolveOpenAIKey } from './agent-config.js';
 import { cancelPendingFlush, discardPendingBuffer } from './buffer.js';
+import { isProcessableMedia, mediaLabel, processMedia } from './media.js';
+
+const DEFAULT_AGENT_TYPE = 'default';
+
+function extractTextFromMessage(
+  messageType: string | undefined,
+  message: Record<string, unknown> | undefined,
+): string | null {
+  if (!message) return null;
+  if (messageType === 'conversation') {
+    const v = message.conversation;
+    return typeof v === 'string' ? v : null;
+  }
+  if (messageType === 'extendedTextMessage') {
+    const etm = message.extendedTextMessage as { text?: unknown } | undefined;
+    return typeof etm?.text === 'string' ? etm.text : null;
+  }
+  return null;
+}
+
+async function persistDetectedMessage(params: {
+  sessionId: string;
+  instance: string;
+  evolutionMessageId: string;
+  messageType: string | undefined;
+  message: Record<string, unknown> | undefined;
+}): Promise<void> {
+  const { sessionId, instance, evolutionMessageId, messageType, message } = params;
+
+  // Texto direto (Mariana mandou texto manual)
+  const text = extractTextFromMessage(messageType, message);
+  if (text) {
+    await supabase.from('chat_messages').insert({
+      session_id: sessionId,
+      instance,
+      role: 'assistant',
+      content: text,
+      evolution_message_id: evolutionMessageId,
+      status: 'sent',
+      metadata: { sender: 'Mariana (manual via polling)' },
+    });
+    return;
+  }
+
+  // Mídia processável (áudio, imagem, vídeo, sticker, documento)
+  if (messageType && isProcessableMedia(messageType) && message) {
+    try {
+      const config = await loadAgentConfig(DEFAULT_AGENT_TYPE);
+      const openaiKey = resolveOpenAIKey(config);
+      const processed = await processMedia({
+        instance,
+        messageId: evolutionMessageId,
+        messageType,
+        message,
+        openaiKey,
+        geminiKey: config.gemini_api_key ?? null,
+      });
+      const article = messageType === 'imageMessage' || messageType === 'stickerMessage' ? 'uma' : 'um';
+      const finalText = processed.text.replace(
+        /^\[O aluno enviou [^\]]+\]/,
+        `[A Mariana enviou ${article} ${mediaLabel(messageType)}]`,
+      );
+      await supabase.from('chat_messages').insert({
+        session_id: sessionId,
+        instance,
+        role: 'assistant',
+        content: finalText,
+        media_type: messageType,
+        transcription: processed.transcription,
+        evolution_message_id: evolutionMessageId,
+        status: 'sent',
+        metadata: { sender: 'Mariana (manual via polling)' },
+      });
+      return;
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), message_type: messageType },
+        'mariana-monitor: falha ao processar mídia — salvando placeholder',
+      );
+    }
+  }
+
+  // Fallback: placeholder genérico
+  const article = messageType === 'imageMessage' || messageType === 'stickerMessage' ? 'uma' : 'um';
+  const label = messageType ? mediaLabel(messageType) : 'mensagem';
+  await supabase.from('chat_messages').insert({
+    session_id: sessionId,
+    instance,
+    role: 'assistant',
+    content: `[A Mariana enviou ${article} ${label}]`,
+    media_type: messageType ?? null,
+    evolution_message_id: evolutionMessageId,
+    status: 'sent',
+    metadata: { sender: 'Mariana (manual via polling)' },
+  });
+}
 
 const POLL_INTERVAL_MS = 30 * 1000; // 30 segundos
 const LOOKBACK_WINDOW_MS = 10 * 60 * 1000; // só considera mensagens dos últimos 10 minutos
@@ -100,7 +197,7 @@ async function checkSession(
 
   if (desconhecidos.length === 0) return;
 
-  // Encontrou mensagem da Mariana NÃO registrada → ativa janela
+  // Encontrou mensagem da Mariana NÃO registrada → ativa janela + persiste no histórico
   const types = desconhecidos.map((m) => m.messageType ?? 'unknown').join(',');
   logger.warn(
     {
@@ -112,6 +209,24 @@ async function checkSession(
     'mariana-monitor: detectou mensagem da Mariana NÃO registrada via webhook',
   );
   await activateWindow(remoteJid, `polling-detected-${types}`);
+
+  // Persiste cada mensagem detectada no histórico (com transcrição/descrição quando possível)
+  for (const m of desconhecidos) {
+    try {
+      await persistDetectedMessage({
+        sessionId: remoteJid,
+        instance,
+        evolutionMessageId: m.keyId,
+        messageType: m.messageType,
+        message: m.message,
+      });
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), key_id: m.keyId },
+        'mariana-monitor: falha ao persistir mensagem detectada',
+      );
+    }
+  }
 }
 
 async function sweepActiveSessions(): Promise<void> {

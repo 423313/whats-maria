@@ -147,7 +147,13 @@ export class EvolutionClient {
     instance: string,
     remoteJid: string,
     limit = 10,
-  ): Promise<Array<{ keyId: string; fromMe: boolean; messageTimestamp: number; messageType?: string }>> {
+  ): Promise<Array<{
+    keyId: string;
+    fromMe: boolean;
+    messageTimestamp: number;
+    messageType?: string;
+    message?: Record<string, unknown>;
+  }>> {
     const url = `${this.baseUrl}/chat/findMessages/${encodeURIComponent(instance)}`;
     const body = {
       where: { key: { remoteJid } },
@@ -249,8 +255,20 @@ function extractMessageId(raw: unknown): string {
  */
 function extractMessageRecords(
   raw: unknown,
-): Array<{ keyId: string; fromMe: boolean; messageTimestamp: number; messageType?: string }> {
-  const out: Array<{ keyId: string; fromMe: boolean; messageTimestamp: number; messageType?: string }> = [];
+): Array<{
+  keyId: string;
+  fromMe: boolean;
+  messageTimestamp: number;
+  messageType?: string;
+  message?: Record<string, unknown>;
+}> {
+  const out: Array<{
+    keyId: string;
+    fromMe: boolean;
+    messageTimestamp: number;
+    messageType?: string;
+    message?: Record<string, unknown>;
+  }> = [];
   let candidates: unknown[] = [];
 
   if (Array.isArray(raw)) {
@@ -275,6 +293,7 @@ function extractMessageRecords(
       key?: { id?: unknown; fromMe?: unknown };
       messageTimestamp?: unknown;
       messageType?: unknown;
+      message?: unknown;
     };
     const keyId = typeof m.key?.id === 'string' ? m.key.id : '';
     const fromMe = m.key?.fromMe === true;
@@ -285,8 +304,12 @@ function extractMessageRecords(
       ts = Number(m.messageTimestamp) || 0;
     }
     const messageType = typeof m.messageType === 'string' ? m.messageType : undefined;
+    const message =
+      m.message && typeof m.message === 'object'
+        ? (m.message as Record<string, unknown>)
+        : undefined;
     if (keyId) {
-      out.push({ keyId, fromMe, messageTimestamp: ts, messageType });
+      out.push({ keyId, fromMe, messageTimestamp: ts, messageType, message });
     }
   }
   return out;

@@ -14,6 +14,26 @@ import {
   registerFlushHandler,
 } from './buffer.js';
 import { isProcessableMedia, processMedia, mediaLabel } from './media.js';
+
+/**
+ * Reformata o texto retornado por processMedia (que assume sender="aluno")
+ * para o caso em que a remetente é a Mariana — usado quando ela envia áudio,
+ * imagem ou vídeo manualmente do celular.
+ */
+function rewriteMediaTextForMariana(originalText: string, messageType: string): string {
+  const label = mediaLabel(messageType);
+  const article = messageType === 'imageMessage' || messageType === 'figurinha' ? 'uma' : 'um';
+  // Substitui o cabeçalho "[O aluno enviou ...]" por "[A Mariana enviou ...]"
+  const replaced = originalText.replace(
+    /^\[O aluno enviou [^\]]+\]/,
+    `[A Mariana enviou ${article} ${label}]`,
+  );
+  // Se não bateu o regex (texto vinha de fallback diferente), prefixa
+  if (replaced === originalText) {
+    return `[A Mariana enviou ${article} ${label}]\n${originalText}`;
+  }
+  return replaced;
+}
 import {
   parseContact,
   parseContactsArray,
@@ -277,9 +297,63 @@ async function handleOutgoingMessage(
     data.message ?? {},
   );
   const text = extractText(messageType, message);
+
+  // ─── 5b. Mídia (áudio/imagem/vídeo/sticker) enviada pela Mariana ────────────
+  // Janela de 24h já foi ativada no passo 2. Aqui processamos a mídia para
+  // transcrever áudios via Whisper e descrever imagens via Vision, e salvamos
+  // o resultado no histórico (chat_messages) com role='assistant' — assim:
+  //  1. Quando a Flora retomar (após 24h), ela vê o que a Mariana disse
+  //  2. Você consegue auditar a conversa completa no banco
   if (!text) {
-    // Áudio, imagem, vídeo, sticker — janela já foi ativada no passo 2.
-    return { status: 'ignored', reason: 'from_me_non_text' };
+    if (isProcessableMedia(messageType)) {
+      try {
+        const config = await loadAgentConfig(DEFAULT_AGENT_TYPE);
+        const openaiKey = resolveOpenAIKey(config);
+        const processed = await processMedia({
+          instance,
+          messageId: evolutionMessageId,
+          messageType,
+          message,
+          openaiKey,
+          geminiKey: config.gemini_api_key ?? null,
+        });
+        const finalText = rewriteMediaTextForMariana(processed.text, messageType);
+        await persistAssistantMessage({
+          sessionId,
+          instance,
+          role: 'assistant',
+          content: finalText,
+          mediaType: messageType,
+          transcription: processed.transcription,
+          evolutionMessageId,
+          status: 'sent',
+          pushName: 'Mariana (manual)',
+        });
+        logger.info(
+          { session_id: sessionId, message_type: messageType, transcribed: !!processed.transcription },
+          'mídia da Mariana persistida no histórico',
+        );
+        return { status: 'persisted', reason: 'from_me_media_processed' };
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err), message_type: messageType },
+          'falha ao processar mídia da Mariana — salvando placeholder',
+        );
+      }
+    }
+    // Fallback: salva placeholder mesmo sem transcrição
+    const article = messageType === 'imageMessage' || messageType === 'stickerMessage' ? 'uma' : 'um';
+    await persistAssistantMessage({
+      sessionId,
+      instance,
+      role: 'assistant',
+      content: `[A Mariana enviou ${article} ${mediaLabel(messageType)}]`,
+      mediaType: messageType,
+      evolutionMessageId,
+      status: 'sent',
+      pushName: 'Mariana (manual)',
+    });
+    return { status: 'persisted', reason: 'from_me_media_placeholder' };
   }
 
   // ─── 6. Tenta promover mensagem pending da própria Flora (echo) ──────────────
@@ -575,11 +649,14 @@ async function persistAssistantMessage(input: PersistMessageInput): Promise<void
     instance: input.instance,
     role: input.role,
     content: input.content,
+    media_type: input.mediaType ?? null,
+    transcription: input.transcription ?? null,
     evolution_message_id: input.evolutionMessageId ?? null,
     status: input.status ?? 'sent',
     model: input.model ?? null,
     tokens_in: input.tokensIn ?? null,
     tokens_out: input.tokensOut ?? null,
+    metadata: input.pushName ? { sender: input.pushName } : {},
   });
   if (error) {
     logger.warn({ err: error.message, session_id: input.sessionId }, 'chat_messages assistant insert failed');

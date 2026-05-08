@@ -71,6 +71,50 @@ export async function handleEvolutionWebhook(
   const instance = payload.instance ?? '';
   const data = payload.data ?? {};
 
+  // ─── KILL SWITCH GLOBAL: qualquer payload com fromMe=true ativa a janela ─────
+  // Antes de qualquer outra lógica (filtro de evento, validação, etc), se
+  // detectamos que a mensagem é da Mariana — em qualquer formato, qualquer
+  // evento, com ou sem id — ativamos a janela de 24h. Esse é o último recurso
+  // contra estruturas de payload inesperadas da Evolution.
+  const fromMeDetected = data.key?.fromMe === true || data.fromMe === true;
+  if (fromMeDetected) {
+    const detectedJid = data.key?.remoteJid ?? data.remoteJid ?? '';
+    logger.warn(
+      {
+        event,
+        instance,
+        message_type: data.messageType,
+        status: data.status,
+        key_fromMe: data.key?.fromMe,
+        data_fromMe: data.fromMe,
+        key_id: data.key?.id,
+        key_remoteJid: data.key?.remoteJid,
+        data_remoteJid: data.remoteJid,
+        data_keyId: data.keyId,
+        data_messageId: data.messageId,
+        has_message: !!data.message,
+        has_editedMessage: !!data.editedMessage,
+        message_keys: data.message ? Object.keys(data.message) : [],
+      },
+      'WEBHOOK fromMe=true detectado (Mariana enviou)',
+    );
+
+    // Ativa janela imediatamente, antes de qualquer filtragem de evento.
+    // Belt-and-suspenders + protege contra eventos com nomes inesperados.
+    if (detectedJid.endsWith('@s.whatsapp.net')) {
+      const earlySessionId = phoneToSessionId(detectedJid.replace('@s.whatsapp.net', ''));
+      try {
+        await ensureChatControl(earlySessionId, instance, DEFAULT_AGENT_TYPE);
+        await updateMarianaManualAt(earlySessionId);
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err), session_id: earlySessionId },
+          'kill-switch global: falha ao ativar janela cedo',
+        );
+      }
+    }
+  }
+
   if (event === 'messages.update') {
     // Belt-and-suspenders: se o update veio de uma mensagem da Mariana (fromMe),
     // ativa a janela de 24h imediatamente — independente do restante do processamento.

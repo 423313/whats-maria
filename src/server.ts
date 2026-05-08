@@ -12,6 +12,7 @@ import {
   stopBufferSweeper,
 } from './services/buffer.js';
 import { startFollowupSweeper, stopFollowupSweeper } from './services/followup.js';
+import { startMarianaMonitor, stopMarianaMonitor } from './services/mariana-monitor.js';
 import { startWeeklyReviewSweeper, stopWeeklyReviewSweeper } from './services/weekly-review.js';
 
 async function main() {
@@ -31,6 +32,7 @@ async function main() {
   initChatbot();
   startBufferSweeper();
   startFollowupSweeper();
+  startMarianaMonitor();
   startWeeklyReviewSweeper();
 
   try {
@@ -47,6 +49,7 @@ async function main() {
       await app.close();
       stopBufferSweeper();
       stopFollowupSweeper();
+      stopMarianaMonitor();
       stopWeeklyReviewSweeper();
       await awaitInflightFlushes(25_000);
       process.exit(0);

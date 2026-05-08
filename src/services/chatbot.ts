@@ -85,7 +85,7 @@ export async function handleEvolutionWebhook(
     return { status: 'ignored', reason: `event_${event || 'missing'}` };
   }
 
-  if (data.key?.fromMe) {
+  if (data.key?.fromMe || data.fromMe) {
     return handleOutgoingMessage(data, instance);
   }
 

@@ -178,6 +178,10 @@ async function handleOutgoingMessage(
     return { status: 'ignored', reason: 'from_me_invalid_jid' };
   }
 
+  // Resolve sessionId aqui para que QUALQUER mídia da Mariana (áudio, imagem, vídeo…)
+  // ative a janela manual, mesmo que não seja texto extraível.
+  const sessionId = phoneToSessionId(remoteJid.replace('@s.whatsapp.net', ''));
+
   const { data: existing } = await supabase
     .from('chat_messages')
     .select('id')
@@ -193,10 +197,10 @@ async function handleOutgoingMessage(
   );
   const text = extractText(messageType, message);
   if (!text) {
+    // Áudio, imagem, vídeo ou qualquer mídia enviada pela Mariana → ativa janela manual
+    await updateMarianaManualAt(sessionId);
     return { status: 'ignored', reason: 'from_me_non_text' };
   }
-
-  const sessionId = phoneToSessionId(remoteJid.replace('@s.whatsapp.net', ''));
 
   const pendingCutoff = new Date(Date.now() - 60_000).toISOString();
   const { data: pendingMatch } = await supabase

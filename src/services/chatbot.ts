@@ -78,7 +78,10 @@ export async function handleEvolutionWebhook(
       const updateJid = data.key?.remoteJid ?? data.remoteJid ?? '';
       if (updateJid.endsWith('@s.whatsapp.net')) {
         const updateSessionId = phoneToSessionId(updateJid.replace('@s.whatsapp.net', ''));
-        void updateMarianaManualAt(updateSessionId);
+        // Garante linha em chat_control antes do UPDATE (vide nota em handleOutgoingMessage)
+        void ensureChatControl(updateSessionId, instance, DEFAULT_AGENT_TYPE).then(() =>
+          updateMarianaManualAt(updateSessionId),
+        );
       }
     }
 
@@ -200,6 +203,12 @@ async function handleOutgoingMessage(
   // bloqueia a Flora por 24h. Isso deve acontecer antes de qualquer outro
   // return, inclusive before validações de evolutionMessageId ou duplicata.
   const sessionId = phoneToSessionId(remoteJid.replace('@s.whatsapp.net', ''));
+
+  // Garante que a linha em chat_control existe — necessário porque
+  // updateMarianaManualAt usa UPDATE (não UPSERT). Se a Mariana iniciar
+  // uma conversa nova (cliente nunca mandou mensagem antes), a linha não
+  // existiria e o UPDATE afetaria 0 linhas, deixando a janela inativa.
+  await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
   await updateMarianaManualAt(sessionId);
 
   // ─── 3. Valida id da mensagem ────────────────────────────────────────────────
@@ -327,6 +336,14 @@ async function handleEditedMessage(
   const paused = await isAIPaused(sessionId);
   if (paused) {
     logger.info({ session_id: sessionId }, 'ai paused, buffering edit without flush');
+  }
+
+  // Mesmo guard que aplicamos a mensagens novas: se Mariana está no controle,
+  // a edição é salva no histórico mas NÃO entra no buffer.
+  const inMarianaWindow = await isWithinMarianaManualWindow(sessionId);
+  if (inMarianaWindow) {
+    logger.info({ session_id: sessionId }, 'janela manual ativa — edição salva no histórico, não bufferizada');
+    return { status: 'saved', reason: 'mariana_window_active_edit' };
   }
 
   await addToBuffer({
@@ -708,7 +725,18 @@ async function flushSession(sessionId: string): Promise<void> {
   }
 
   if (inMarianaWindow) {
-    logger.info({ session_id: sessionId }, 'flush skipped (janela manual Mariana ativa — 24h)');
+    // Defensivo: descarta qualquer entry órfã do buffer (cliente pode ter mandado
+    // mensagem em race com a ativação da janela; o sweeper continuaria insistindo
+    // em fazer flush e quando a janela expirasse, Flora responderia mensagens antigas).
+    if (rows.length > 0) {
+      await markBufferProcessed(rows.map((r) => r.id));
+      logger.info(
+        { session_id: sessionId, discarded: rows.length },
+        'flush bloqueado pela janela manual — buffer órfão descartado',
+      );
+    } else {
+      logger.info({ session_id: sessionId }, 'flush skipped (janela manual Mariana ativa — 24h)');
+    }
     return;
   }
 

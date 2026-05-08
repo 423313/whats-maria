@@ -7,6 +7,8 @@ import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-con
 import { runAgent } from './agent.js';
 import {
   addToBuffer,
+  cancelPendingFlush,
+  discardPendingBuffer,
   markBufferProcessed,
   peekPendingBuffer,
   registerFlushHandler,
@@ -157,6 +159,15 @@ export async function handleEvolutionWebhook(
   const paused = await isAIPaused(sessionId);
   if (paused) {
     logger.info({ session_id: sessionId }, 'ai paused, buffering without flush');
+  }
+
+  // Se a Mariana está no controle (janela de 24h ativa), não entra no buffer.
+  // A mensagem já foi persistida em chat_messages para o histórico — mas não
+  // queremos que a Flora responda automaticamente enquanto a Mariana está atendendo.
+  const inMarianaWindow = await isWithinMarianaManualWindow(sessionId);
+  if (inMarianaWindow) {
+    logger.info({ session_id: sessionId }, 'janela manual Mariana ativa — mensagem salva no histórico, não bufferizada');
+    return { status: 'saved', reason: 'mariana_window_active' };
   }
 
   await addToBuffer({
@@ -651,9 +662,15 @@ async function updateMarianaManualAt(sessionId: string): Promise<void> {
     .eq('session_id', sessionId);
   if (error) {
     logger.warn({ err: error.message, session_id: sessionId }, 'updateMarianaManualAt failed');
-  } else {
-    logger.info({ session_id: sessionId }, 'janela manual Mariana iniciada (24h)');
+    return;
   }
+  logger.info({ session_id: sessionId }, 'janela manual Mariana iniciada (24h)');
+
+  // Descarta imediatamente qualquer mensagem pendente no buffer para evitar que
+  // a Flora responda depois que a janela de 24h expirar com contexto desatualizado.
+  // Também cancela o timer de debounce para que não tente disparar um flush em vão.
+  cancelPendingFlush(sessionId);
+  await discardPendingBuffer(sessionId);
 }
 
 const MARIANA_MANUAL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 horas
@@ -762,12 +779,14 @@ async function flushSession(sessionId: string): Promise<void> {
   const CARDS_TOKEN = '[CARDS_CURSO]';
 
   for (let i = 0; i < mensagens.length; i++) {
-    // A cada mensagem (exceto a primeira que já foi checada), verifica se Mariana
-    // assumiu o chat durante o envio — para imediatamente se a janela foi ativada.
-    if (i > 0 && (await isWithinMarianaManualWindow(sessionId))) {
+    // Verifica a janela antes de CADA mensagem — inclusive a primeira.
+    // O runAgent pode levar 2-4s; Mariana pode enviar um áudio durante esse tempo.
+    // Não usar "i > 0" aqui: a checagem inicial no topo do flushSession cobre o
+    // snapshot no momento do flush, mas não cobre o tempo gasto pelo runAgent.
+    if (await isWithinMarianaManualWindow(sessionId)) {
       logger.info(
         { session_id: sessionId, stopped_at: i },
-        'flush interrompido mid-sequence (Mariana assumiu durante o envio)',
+        'flush interrompido (Mariana assumiu — janela ativa no momento do envio)',
       );
       break;
     }

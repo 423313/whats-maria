@@ -200,7 +200,7 @@ async function sweepCloseSessions(): Promise<void> {
   // Busca sessões onde o follow-up foi enviado há mais de 30 min e ainda não foram encerradas
   const { data: candidates, error } = await supabase
     .from('chat_control')
-    .select('session_id, followup_sent_at, followup_context, instance, ai_paused')
+    .select('session_id, followup_sent_at, followup_context, instance, ai_paused, mariana_last_manual_at')
     .not('followup_sent_at', 'is', null)
     .lt('followup_sent_at', cutoff)
     .is('followup_closed_at', null);
@@ -212,6 +212,12 @@ async function sweepCloseSessions(): Promise<void> {
 
   for (const control of candidates ?? []) {
     if (control.ai_paused) continue; // humano no controle, não interferir
+
+    // Janela de 24h: Mariana enviou mensagem manual recentemente — não encerrar
+    if (control.mariana_last_manual_at) {
+      const elapsed = Date.now() - new Date(control.mariana_last_manual_at).getTime();
+      if (elapsed < 24 * 60 * 60 * 1000) continue;
+    }
 
     // Verifica se a cliente respondeu após o follow-up (se sim, não encerrar)
     const { data: userReply } = await supabase

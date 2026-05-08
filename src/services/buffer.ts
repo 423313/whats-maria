@@ -143,6 +143,38 @@ export async function peekPendingBuffer(sessionId: string): Promise<BufferedMess
   return (data ?? []) as BufferedMessage[];
 }
 
+/**
+ * Descarta todas as entradas pendentes de uma sessão no buffer (marca como processadas).
+ * Chamado quando a Mariana assume o chat manualmente para evitar que mensagens antigas
+ * disparem uma resposta da Flora depois que a janela de 24h expirar.
+ */
+export async function discardPendingBuffer(sessionId: string): Promise<void> {
+  const { error } = await supabase
+    .from('message_buffer')
+    .update({ processed_at: new Date().toISOString() })
+    .eq('session_id', sessionId)
+    .is('processed_at', null);
+  if (error) {
+    logger.warn({ err: error.message, session_id: sessionId }, 'discardPendingBuffer failed');
+  } else {
+    logger.info({ session_id: sessionId }, 'buffer pendente descartado (Mariana assumiu)');
+  }
+}
+
+/**
+ * Cancela o timer de debounce pendente para uma sessão.
+ * Chamado junto com discardPendingBuffer para que o timer não tente fazer flush
+ * de um buffer que já foi descartado.
+ */
+export function cancelPendingFlush(sessionId: string): void {
+  const existing = pending.get(sessionId);
+  if (existing) {
+    clearTimeout(existing.timer);
+    pending.delete(sessionId);
+    logger.debug({ session_id: sessionId }, 'debounce timer cancelado (Mariana assumiu)');
+  }
+}
+
 export async function markBufferProcessed(rowIds: string[]): Promise<number> {
   if (rowIds.length === 0) return 0;
   const { data, error } = await supabase

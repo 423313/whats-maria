@@ -75,20 +75,67 @@ async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow
   return ((data ?? []) as HistoryRow[]).reverse();
 }
 
-const WEEKDAY_PT = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+// Dia da semana → status do studio (atende ou fechado)
+// Mariana: terça (2) a sexta (5) das 09h-16h, sábado (6) das 08h-12h
+// Fechado: segunda (1) e domingo (0)
+const STUDIO_STATUS_BY_WEEKDAY: Record<number, { aberto: boolean; horario: string; profissionais: string }> = {
+  0: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
+  1: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
+  2: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
+  3: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
+  4: { aberto: true, horario: '09h às 16h (Mariana) e 13h30 às 21h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
+  5: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
+  6: { aberto: true, horario: '08h às 12h (Mariana) e 08h às 18h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
+};
 
+/**
+ * Calcula a data e hora atual no fuso de São Paulo de forma robusta usando
+ * Intl.DateTimeFormat (não depende do fuso do servidor — funciona no Railway,
+ * em UTC, ou em qualquer outro ambiente).
+ */
 function buildDateContext(): string {
-  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
-  const weekday = WEEKDAY_PT[now.getDay()];
-  const day = String(now.getDate()).padStart(2, '0');
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const year = now.getFullYear();
-  const hour = String(now.getHours()).padStart(2, '0');
-  const min = String(now.getMinutes()).padStart(2, '0');
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(now);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+
+  const weekdayName = get('weekday'); // "sexta-feira"
+  const day = get('day');
+  const month = get('month');
+  const year = get('year');
+  const hour = get('hour');
+  const minute = get('minute');
+
+  // Calcula índice do dia da semana via UTC (depois de aplicar offset BR -3h)
+  const utcMs = now.getTime();
+  const brMs = utcMs - 3 * 60 * 60 * 1000;
+  const brDate = new Date(brMs);
+  const weekdayIndex = brDate.getUTCDay();
+  const status = STUDIO_STATUS_BY_WEEKDAY[weekdayIndex] ?? STUDIO_STATUS_BY_WEEKDAY[0]!;
+
+  const statusLine = status.aberto
+    ? `HOJE O STUDIO ESTÁ ABERTO. Horário de atendimento: ${status.horario}. Profissionais: ${status.profissionais}.`
+    : `HOJE O STUDIO ESTÁ FECHADO. Não há atendimento hoje.`;
+
   return (
-    `[CONTEXTO DO SISTEMA — leia antes de qualquer coisa]\n` +
-    `Data e hora atual: ${weekday}, ${day}/${month}/${year} às ${hour}:${min} (horário de Brasília).\n` +
-    `Use essa informação quando a cliente perguntar sobre "hoje", "agora" ou disponibilidade do dia.\n`
+    `[CONTEXTO DO SISTEMA — LEIA ANTES DE QUALQUER COISA]\n` +
+    `📅 HOJE É ${weekdayName.toUpperCase()}, ${day}/${month}/${year}, ${hour}:${minute} (horário de Brasília).\n` +
+    `${statusLine}\n` +
+    `\n` +
+    `REGRAS OBRIGATÓRIAS sobre "hoje":\n` +
+    `- Se a cliente perguntar "tem horário hoje?" ou "hoje atende?", responda com base no statusLine acima — NUNCA chute.\n` +
+    `- Se HOJE estiver ABERTO, NÃO diga que está fechado. NÃO contradiga o statusLine.\n` +
+    `- Se HOJE estiver FECHADO, informe o próximo dia de atendimento.\n` +
+    `- Para "amanhã", "depois de amanhã" ou outros dias, calcule a partir da data acima e consulte os horários da semana.\n`
   );
 }
 

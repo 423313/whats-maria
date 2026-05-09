@@ -15,6 +15,9 @@ import {
 } from './buffer.js';
 import { isProcessableMedia, processMedia, mediaLabel } from './media.js';
 
+// URL do painel admin — incluída no rodapé das notificações pra Mariana
+const ADMIN_PANEL_URL = 'https://ia-whatsapp-app-production-d07a.up.railway.app/admin';
+
 /**
  * Reformata o texto retornado por processMedia (que assume sender="aluno")
  * para o caso em que a remetente é a Mariana — usado quando ela envia áudio,
@@ -1145,7 +1148,7 @@ async function handlePendingActions(
     }
 
     lines.push(`WhatsApp: ${phone}`);
-    lines.push(`Acesse o painel para confirmar ou recusar.`);
+    lines.push(`Painel: ${ADMIN_PANEL_URL}`);
 
     for (let i = 0; i < lines.length; i++) {
       if (i > 0) await delay(800);
@@ -1221,6 +1224,7 @@ async function notifyMarianaEscalation(
     clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`,
     trimmed ? `Última msg da Flora: "${trimmed}"` : null,
     `WhatsApp: ${phone}`,
+    `Painel: ${ADMIN_PANEL_URL}`,
   ].filter((l): l is string => Boolean(l));
 
   try {

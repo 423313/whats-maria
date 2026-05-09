@@ -35,6 +35,18 @@ const WORKING_HOURS_BY_WEEKDAY: Record<number, { start: number; end: number } | 
   6: { start: 8, end: 12 },         // sábado
 };
 
+// Grade oficial de horários que podem ser oferecidos pra cliente.
+// Pré-filtrada pelo código antes de injetar no prompt — o modelo não decide.
+const OFFICIAL_GRID_BY_WEEKDAY: Record<number, string[]> = {
+  0: [],
+  1: [],
+  2: ['09:00', '11:00', '13:00', '15:00'],
+  3: ['09:00', '11:00', '13:00', '15:00'],
+  4: ['09:00', '11:00', '13:00', '15:00'],
+  5: ['09:00', '11:00', '13:00', '15:00'],
+  6: ['08:00', '10:00'],
+};
+
 const CACHE_TTL_MS = 60_000;
 let cachedContext: { text: string; expiresAt: number } | null = null;
 
@@ -98,7 +110,6 @@ async function fetchBusyIntervals(
     singleEvents: true,
     orderBy: 'startTime',
     maxResults: 500,
-    privateExtendedProperty: ['syncSource=belasis-sync'],
   });
 
   const items = res.data.items ?? [];
@@ -121,6 +132,7 @@ async function fetchBusyIntervals(
 
 interface DaySlots {
   weekdayLabel: string;     // "ter", "qua"...
+  weekdayIdx: number;       // 0=dom..6=sáb (pra cruzar com a grade oficial)
   dateLabel: string;        // "12/05"
   slots: string[];          // ["09:00", "09:30", ...]
   closed: boolean;          // true se dom/seg
@@ -164,7 +176,7 @@ function buildDaySlots(
 
   const hours = WORKING_HOURS_BY_WEEKDAY[spDay.weekdayIdx];
   if (!hours) {
-    return { weekdayLabel, dateLabel, slots: [], closed: true };
+    return { weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel, slots: [], closed: true };
   }
 
   const slots: string[] = [];
@@ -186,7 +198,22 @@ function buildDaySlots(
     }
   }
 
-  return { weekdayLabel, dateLabel, slots, closed: false };
+  return { weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel, slots, closed: false };
+}
+
+/**
+ * Filtra a grade oficial de um dia, mantendo apenas os horários cuja string
+ * exata aparece na lista de slots livres do Calendar.
+ *
+ * Esse cruzamento é feito aqui no código (e não pelo modelo) porque o
+ * gpt-4.1-mini não cumpria a regra de cruzamento de forma confiável.
+ * Pré-filtrando, o modelo só copia o que está no bloco.
+ */
+function buildOfficialGridSlots(day: DaySlots): string[] {
+  if (day.closed) return [];
+  const grid = OFFICIAL_GRID_BY_WEEKDAY[day.weekdayIdx] ?? [];
+  const freeSet = new Set(day.slots);
+  return grid.filter((slot) => freeSet.has(slot));
 }
 
 /**
@@ -215,35 +242,55 @@ function spParts(d: Date): { year: number; month1: number; day: number; weekdayI
 // ───── formatação do texto injetado no prompt ─────
 
 function formatContext(daySlots: DaySlots[]): string {
-  const header =
-    `[DISPONIBILIDADE DA MARIANA — próximos ${DAYS_AHEAD} dias]\n` +
-    `Horários comerciais: terça a sexta 9h-16h, sábado 8h-12h. Domingo e segunda fechado.\n` +
-    `Slots livres em janelas de ${SLOT_MINUTES} min. Slots adjacentes = janela contínua.\n` +
-    `Exemplo: "09:00, 09:30, 10:00" = livre 09:00 às 10:30 (90 min).\n` +
+  // ─── BLOCO 1: GRADE OFICIAL (fonte da verdade pro que oferecer) ───
+  const gridHeader =
+    `[GRADE OFICIAL DA MARIANA — horários disponíveis para oferecer]\n` +
+    `FONTE DA VERDADE para os horários que você pode oferecer pra cliente.\n` +
+    `Já vem PRÉ-FILTRADA pelo sistema cruzando a grade oficial com o Calendar.\n` +
+    `Cada linha = horários da grade oficial LIVRES naquele dia.\n` +
+    `NUNCA ofereça um horário que não está LISTADO LITERALMENTE aqui.\n` +
     `\n`;
 
-  const lines: string[] = [];
+  const gridLines: string[] = [];
   for (const day of daySlots) {
+    if (day.closed) continue;
+    const officialFree = buildOfficialGridSlots(day);
     const prefix = `${day.weekdayLabel} ${day.dateLabel}: `;
-    if (day.closed) {
-      // Não emitir dom/seg pra economizar tokens — modelo já sabe pelo cabeçalho.
-      continue;
-    }
-    if (day.slots.length === 0) {
-      lines.push(`${prefix}sem horários livres`);
+    if (officialFree.length === 0) {
+      gridLines.push(`${prefix}sem horários da grade livres`);
     } else {
-      lines.push(`${prefix}${day.slots.join(', ')}`);
+      gridLines.push(`${prefix}${officialFree.join(', ')}`);
     }
   }
 
-  if (lines.length === 0) {
+  // ─── BLOCO 2: DISPONIBILIDADE BRUTA (uso interno pra cálculo de duração) ───
+  const rawHeader =
+    `\n\n[DISPONIBILIDADE BRUTA DA MARIANA — uso interno: cálculo de duração]\n` +
+    `Slots livres em janelas de ${SLOT_MINUTES} min. Slots adjacentes = janela contínua.\n` +
+    `NÃO use este bloco para escolher os horários a oferecer — isso é função do bloco GRADE OFICIAL acima.\n` +
+    `Use SOMENTE para confirmar se um horário oficial cabe na duração do serviço.\n` +
+    `Exemplo: alongamento (90 min) começando 09:00 só vale se "09:00, 09:30, 10:00" estiverem listados.\n` +
+    `\n`;
+
+  const rawLines: string[] = [];
+  for (const day of daySlots) {
+    if (day.closed) continue;
+    const prefix = `${day.weekdayLabel} ${day.dateLabel}: `;
+    if (day.slots.length === 0) {
+      rawLines.push(`${prefix}sem horários livres`);
+    } else {
+      rawLines.push(`${prefix}${day.slots.join(', ')}`);
+    }
+  }
+
+  if (gridLines.length === 0 && rawLines.length === 0) {
     return (
-      header +
-      `(nenhuma janela livre nos próximos ${DAYS_AHEAD} dias úteis. Use isso ao responder a cliente — ofereça ver semanas seguintes ou peça pra ela aguardar a Mariana confirmar.)`
+      gridHeader +
+      `(nenhuma janela livre nos próximos ${DAYS_AHEAD} dias úteis. Ao responder a cliente, ofereça ver semanas seguintes ou peça pra ela aguardar a Mariana confirmar.)`
     );
   }
 
-  return header + lines.join('\n');
+  return gridHeader + gridLines.join('\n') + rawHeader + rawLines.join('\n');
 }
 
 // ───── API pública ─────

@@ -99,6 +99,9 @@ export async function handleEvolutionWebhook(
   // detectamos que a mensagem é da Mariana — em qualquer formato, qualquer
   // evento, com ou sem id — ativamos a janela de 24h. Esse é o último recurso
   // contra estruturas de payload inesperadas da Evolution.
+  // Importante: precisamos distinguir mensagem manual da Mariana de echo da
+  // própria Flora (sendText também gera webhook fromMe=true). Se há resposta
+  // pending da Flora recém-emitida pra essa sessão, é echo — não ativa janela.
   const fromMeDetected = data.key?.fromMe === true || data.fromMe === true;
   if (fromMeDetected) {
     const detectedJid = data.key?.remoteJid ?? data.remoteJid ?? '';
@@ -127,8 +130,16 @@ export async function handleEvolutionWebhook(
     if (detectedJid.endsWith('@s.whatsapp.net')) {
       const earlySessionId = phoneToSessionId(detectedJid.replace('@s.whatsapp.net', ''));
       try {
-        await ensureChatControl(earlySessionId, instance, DEFAULT_AGENT_TYPE);
-        await updateMarianaManualAt(earlySessionId);
+        const isEcho = await hasRecentPendingFloraReply(earlySessionId);
+        if (isEcho) {
+          logger.info(
+            { session_id: earlySessionId, event },
+            'kill-switch global: echo da Flora detectado (pending recente) — janela NÃO ativada',
+          );
+        } else {
+          await ensureChatControl(earlySessionId, instance, DEFAULT_AGENT_TYPE);
+          await updateMarianaManualAt(earlySessionId);
+        }
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err), session_id: earlySessionId },
@@ -141,14 +152,23 @@ export async function handleEvolutionWebhook(
   if (event === 'messages.update') {
     // Belt-and-suspenders: se o update veio de uma mensagem da Mariana (fromMe),
     // ativa a janela de 24h imediatamente — independente do restante do processamento.
+    // Mesmo guard de echo: pending recente da Flora indica que é envio dela mesma.
     if (data.fromMe === true) {
       const updateJid = data.key?.remoteJid ?? data.remoteJid ?? '';
       if (updateJid.endsWith('@s.whatsapp.net')) {
         const updateSessionId = phoneToSessionId(updateJid.replace('@s.whatsapp.net', ''));
-        // Garante linha em chat_control antes do UPDATE (vide nota em handleOutgoingMessage)
-        void ensureChatControl(updateSessionId, instance, DEFAULT_AGENT_TYPE).then(() =>
-          updateMarianaManualAt(updateSessionId),
-        );
+        void hasRecentPendingFloraReply(updateSessionId).then(async (isEcho) => {
+          if (isEcho) {
+            logger.info(
+              { session_id: updateSessionId },
+              'messages.update fromMe: echo da Flora — janela NÃO ativada',
+            );
+            return;
+          }
+          // Garante linha em chat_control antes do UPDATE (vide nota em handleOutgoingMessage)
+          await ensureChatControl(updateSessionId, instance, DEFAULT_AGENT_TYPE);
+          await updateMarianaManualAt(updateSessionId);
+        });
       }
     }
 
@@ -265,10 +285,12 @@ async function handleOutgoingMessage(
     return { status: 'ignored', reason: 'from_me_invalid_jid' };
   }
 
-  // ─── 2. Ativa janela de 24h IMEDIATAMENTE ────────────────────────────────────
+  // ─── 2. Ativa janela de 24h (a menos que seja echo da Flora) ─────────────────
   // Qualquer mensagem da Mariana (áudio, imagem, vídeo, texto, sticker…)
-  // bloqueia a Flora por 24h. Isso deve acontecer antes de qualquer outro
-  // return, inclusive before validações de evolutionMessageId ou duplicata.
+  // bloqueia a Flora por 24h. MAS: webhooks fromMe também são disparados pelo
+  // echo do próprio sendText da Flora — se há resposta pending recente da Flora
+  // pra essa sessão, é echo, não envio manual. Garantimos chat_control sempre,
+  // mas só ativamos a janela quando NÃO é echo.
   const sessionId = phoneToSessionId(remoteJid.replace('@s.whatsapp.net', ''));
 
   // Garante que a linha em chat_control existe — necessário porque
@@ -276,7 +298,15 @@ async function handleOutgoingMessage(
   // uma conversa nova (cliente nunca mandou mensagem antes), a linha não
   // existiria e o UPDATE afetaria 0 linhas, deixando a janela inativa.
   await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
-  await updateMarianaManualAt(sessionId);
+  const isEchoFromFlora = await hasRecentPendingFloraReply(sessionId);
+  if (!isEchoFromFlora) {
+    await updateMarianaManualAt(sessionId);
+  } else {
+    logger.info(
+      { session_id: sessionId },
+      'handleOutgoingMessage: pending recente detectado — tratado como echo da Flora, janela NÃO ativada',
+    );
+  }
 
   // ─── 3. Valida id da mensagem ────────────────────────────────────────────────
   const evolutionMessageId = data.key?.id ?? null;
@@ -732,6 +762,42 @@ async function ensureChatControl(
   if (error) {
     logger.debug({ err: error.message, session_id: sessionId }, 'chat_control upsert noop');
   }
+}
+
+/**
+ * Distingue echo da própria Flora de mensagem manual da Mariana.
+ *
+ * Quando a Flora chama evolution.sendText, a Evolution dispara webhook
+ * MESSAGES_UPSERT com fromMe=true para a mesma mensagem. Sem essa checagem,
+ * o kill-switch global ativaria a janela manual de 24h a cada resposta da
+ * Flora — bloqueando a si mesma de responder mensagens subsequentes do cliente.
+ *
+ * Heurística: existe chat_messages role='assistant' com status='pending' e
+ * sem evolution_message_id criada nos últimos PENDING_ECHO_WINDOW_MS pra essa
+ * sessão. O markAssistantSent em flushSession promove pending→sent assim que
+ * o sendText retorna; o webhook de echo costuma chegar nesse mesmo intervalo.
+ */
+const PENDING_ECHO_WINDOW_MS = 90_000;
+async function hasRecentPendingFloraReply(sessionId: string): Promise<boolean> {
+  const cutoff = new Date(Date.now() - PENDING_ECHO_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('id')
+    .eq('session_id', sessionId)
+    .eq('role', 'assistant')
+    .eq('status', 'pending')
+    .is('evolution_message_id', null)
+    .gte('created_at', cutoff)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.warn(
+      { err: error.message, session_id: sessionId },
+      'hasRecentPendingFloraReply query failed',
+    );
+    return false;
+  }
+  return !!data;
 }
 
 async function isAIPaused(sessionId: string): Promise<boolean> {

@@ -285,16 +285,100 @@
     </div>
 
     <div id="prompt-view">
-      <h2>✏️ Editar Prompt da FLORA</h2>
-      <p>Qualquer alteração entra em vigor em até 30 segundos, sem precisar reiniciar o servidor.</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <h2>✏️ Editar Prompt da FLORA</h2>
+        <button class="refresh-btn" onclick="toggleHistoryPanel()" id="history-toggle-btn">📜 Histórico de versões</button>
+      </div>
+      <p>Qualquer alteração entra em vigor em até 30 segundos, sem precisar reiniciar o servidor.
+      <span id="prompt-meta" style="color:#666; margin-left:8px;"></span></p>
       <textarea id="prompt-textarea" placeholder="Carregando prompt..."></textarea>
       <div class="prompt-actions">
         <button class="btn-save" onclick="savePrompt()">Salvar alterações</button>
         <span id="save-status"></span>
       </div>
+
+      <!-- Painel lateral de histórico (toggleable) -->
+      <div id="history-panel" style="display:none; position:fixed; top:0; right:0; bottom:0; width:380px; background:#fff; border-left:1px solid #e8e0d8; box-shadow:-4px 0 16px rgba(0,0,0,0.08); z-index:50; overflow-y:auto; padding:20px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <h3 style="font-size:15px;">📜 Versões anteriores</h3>
+          <button class="refresh-btn" onclick="toggleHistoryPanel()" style="padding:4px 10px;">✕</button>
+        </div>
+        <p style="font-size:12px; color:#888; margin-bottom:16px;">Cada save cria uma versão. Clique em "Restaurar" pra reverter — a versão atual também vai pro histórico.</p>
+        <div id="history-list">Carregando…</div>
+      </div>
     </div>
   </div>
 </div>
+
+<!-- MODAL: confirmar save com tokens removidos -->
+<div id="token-warning-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#fff; padding:28px; border-radius:12px; max-width:520px; width:90%; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <h3 style="font-size:17px; color:#c0392b; margin-bottom:14px;">⚠️ Tokens críticos sendo removidos</h3>
+    <p style="font-size:13px; color:#555; margin-bottom:16px; line-height:1.5;">
+      Este save vai REMOVER funcionalidades importantes da Flora. Confirme apenas se for proposital:
+    </p>
+    <ul id="token-warning-list" style="font-size:13px; line-height:1.8; padding-left:20px; margin-bottom:20px;"></ul>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeTokenWarningModal()" style="padding:10px 20px; background:#eee; color:#444; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Cancelar</button>
+      <button onclick="confirmSaveWithMissingTokens()" style="padding:10px 20px; background:#c0392b; color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Salvar mesmo assim</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: confirmar pendência (preview da mensagem que vai pra cliente) -->
+<div id="confirm-pending-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#fff; padding:28px; border-radius:12px; max-width:560px; width:90%; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <h3 style="font-size:17px; color:#22c55e; margin-bottom:14px;">✅ Confirmar agendamento</h3>
+    <p style="font-size:13px; color:#555; margin-bottom:14px; line-height:1.5;">
+      A cliente vai receber esta mensagem automaticamente no WhatsApp:
+    </p>
+    <div id="confirm-message-preview" style="background:#f9f3ee; padding:14px 16px; border-radius:8px; font-size:13px; color:#2d2d2d; line-height:1.5; white-space:pre-wrap; margin-bottom:16px; border-left:3px solid #22c55e;"></div>
+    <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#666; margin-bottom:20px; cursor:pointer;">
+      <input type="checkbox" id="confirm-notify-cb" checked style="cursor:pointer;" />
+      Enviar mensagem automática pra cliente
+    </label>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeConfirmPendingModal()" style="padding:10px 20px; background:#eee; color:#444; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Cancelar</button>
+      <button onclick="executeConfirmPending()" style="padding:10px 20px; background:#22c55e; color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: recusar pendência (com motivo) -->
+<div id="reject-pending-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#fff; padding:28px; border-radius:12px; max-width:560px; width:90%; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <h3 style="font-size:17px; color:#ef4444; margin-bottom:14px;">❌ Recusar pendência</h3>
+    <p style="font-size:13px; color:#555; margin-bottom:14px; line-height:1.5;">
+      Selecione o motivo (vai aparecer na mensagem que a cliente recebe):
+    </p>
+    <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;">
+      <button class="reject-reason-btn" onclick="selectRejectReason('agenda lotada')">📅 Agenda lotada nesse horário</button>
+      <button class="reject-reason-btn" onclick="selectRejectReason('conflito de horário')">⚠️ Conflito de horário</button>
+      <button class="reject-reason-btn" onclick="selectRejectReason('imprevisto da Mariana')">🤷 Imprevisto da Mariana</button>
+      <button class="reject-reason-btn" onclick="selectRejectReason(null)">✏️ Outro motivo (digitar)</button>
+    </div>
+    <textarea id="reject-reason-text" placeholder="Motivo personalizado..." style="width:100%; min-height:70px; padding:10px 12px; border:1.5px solid #ddd; border-radius:8px; font-size:13px; resize:vertical; outline:none; font-family:inherit; margin-bottom:14px;"></textarea>
+    <p style="font-size:12px; color:#888; margin-bottom:8px;">Pré-visualização da mensagem que a cliente vai receber:</p>
+    <div id="reject-message-preview" style="background:#fdf2f2; padding:14px 16px; border-radius:8px; font-size:13px; color:#2d2d2d; line-height:1.5; white-space:pre-wrap; margin-bottom:16px; border-left:3px solid #ef4444; min-height:50px;"></div>
+    <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#666; margin-bottom:20px; cursor:pointer;">
+      <input type="checkbox" id="reject-notify-cb" checked style="cursor:pointer;" />
+      Enviar mensagem automática pra cliente
+    </label>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeRejectPendingModal()" style="padding:10px 20px; background:#eee; color:#444; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Cancelar</button>
+      <button onclick="executeRejectPending()" style="padding:10px 20px; background:#ef4444; color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Recusar</button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .reject-reason-btn {
+    text-align:left; padding:10px 14px; background:#f9f3ee; border:1.5px solid transparent;
+    border-radius:8px; font-size:13px; color:#444; cursor:pointer; font-weight:500;
+  }
+  .reject-reason-btn:hover { border-color:#8b1a2e; color:#8b1a2e; }
+  .reject-reason-btn.selected { background:#fdf0f2; border-color:#8b1a2e; color:#8b1a2e; font-weight:700; }
+</style>
 
 <script>
   let token = localStorage.getItem('admin_token') || '';
@@ -460,6 +544,8 @@
     const items = await res.json();
     const container = document.getElementById('pending-list');
 
+    indexPendingItems(items);
+
     if (!items.length) {
       container.innerHTML = '<p style="color:#bbb; font-size:14px; text-align:center; padding:40px 0;">Nenhuma pendência encontrada.</p>';
       return;
@@ -489,8 +575,8 @@
       `;
 
       const actionsHtml = item.status === 'pendente' ? `
-        <button onclick="updatePending('${item.id}','confirmado')" style="background:#22c55e;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">✅ Confirmar</button>
-        <button onclick="updatePending('${item.id}','recusado')" style="background:#ef4444;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">❌ Recusar</button>
+        <button onclick="openConfirmPendingModal('${item.id}')" style="background:#22c55e;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">✅ Confirmar</button>
+        <button onclick="openRejectPendingModal('${item.id}')" style="background:#ef4444;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">❌ Recusar</button>
       ` : `<span style="font-size:13px;color:#aaa;">Ação já realizada</span>`;
 
       return `
@@ -512,11 +598,126 @@
     }).join('');
   }
 
-  async function updatePending(id, newStatus) {
+  // ---- Confirmar / Recusar pendência (com mensagem auto pra cliente) ----
+
+  // Cache de pendências por id pra usar nos modais sem refetch
+  let _pendingById = {};
+  let _currentPendingId = null;
+  let _selectedRejectReason = '';
+
+  function indexPendingItems(items) {
+    _pendingById = {};
+    for (const it of items) _pendingById[it.id] = it;
+  }
+
+  function previewConfirmMessage(item) {
+    const name = (item.client_name || '').trim().split(/\s+/)[0] || '';
+    const greeting = name ? `Oi ${name}!` : 'Oi!';
+    const f = item.fields || {};
+    if (item.type === 'agendamento') {
+      const proc = f.procedimento || 'seu serviço';
+      const data = f['data_e_horário_solicitados'] || '';
+      const dataLine = data ? ` pra ${data}` : '';
+      return `${greeting} A Mariana confirmou seu agendamento de ${proc}${dataLine}. Te esperamos no studio! Qualquer coisa, é só me chamar aqui.`;
+    }
+    return `${greeting} A Mariana confirmou sua vaga no curso! Ela vai te chamar pra alinhar os últimos detalhes (data, kit, pagamento).`;
+  }
+
+  function previewRejectMessage(item, reason) {
+    const name = (item.client_name || '').trim().split(/\s+/)[0] || '';
+    const greeting = name ? `Oi ${name}!` : 'Oi!';
+    const f = item.fields || {};
+    const reasonText = (reason || '').trim();
+    const motivoLine = reasonText ? ` Motivo: ${reasonText}.` : '';
+    if (item.type === 'agendamento') {
+      const data = f['data_e_horário_solicitados'] || 'esse horário';
+      return `${greeting} Infelizmente ${data} não vai ser possível.${motivoLine} Quer que eu te mostre outras opções de horário?`;
+    }
+    return `${greeting} A Mariana não vai conseguir fechar o curso nessa data.${motivoLine} Quer ver outras opções de turma?`;
+  }
+
+  function openConfirmPendingModal(id) {
+    _currentPendingId = id;
+    const item = _pendingById[id];
+    if (!item) return alert('Pendência não encontrada — recarregue a lista.');
+    document.getElementById('confirm-message-preview').textContent = previewConfirmMessage(item);
+    document.getElementById('confirm-notify-cb').checked = true;
+    document.getElementById('confirm-pending-modal').style.display = 'flex';
+  }
+
+  function closeConfirmPendingModal() {
+    document.getElementById('confirm-pending-modal').style.display = 'none';
+    _currentPendingId = null;
+  }
+
+  async function executeConfirmPending() {
+    const id = _currentPendingId;
+    const notify = document.getElementById('confirm-notify-cb').checked;
+    closeConfirmPendingModal();
     await fetch(`/admin/pending/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ status: newStatus }),
+      body: JSON.stringify({ status: 'confirmado', notify }),
+    });
+    loadPending();
+  }
+
+  function openRejectPendingModal(id) {
+    _currentPendingId = id;
+    _selectedRejectReason = '';
+    const item = _pendingById[id];
+    if (!item) return alert('Pendência não encontrada — recarregue a lista.');
+    document.getElementById('reject-reason-text').value = '';
+    document.querySelectorAll('.reject-reason-btn').forEach(b => b.classList.remove('selected'));
+    document.getElementById('reject-message-preview').textContent = previewRejectMessage(item, '');
+    document.getElementById('reject-notify-cb').checked = true;
+    document.getElementById('reject-pending-modal').style.display = 'flex';
+  }
+
+  function closeRejectPendingModal() {
+    document.getElementById('reject-pending-modal').style.display = 'none';
+    _currentPendingId = null;
+  }
+
+  function selectRejectReason(reason) {
+    _selectedRejectReason = reason || '';
+    document.querySelectorAll('.reject-reason-btn').forEach(b => b.classList.remove('selected'));
+    if (reason) {
+      // Marca o botão correspondente
+      const btns = document.querySelectorAll('.reject-reason-btn');
+      btns.forEach(b => { if (b.textContent.toLowerCase().includes(reason.toLowerCase())) b.classList.add('selected'); });
+      document.getElementById('reject-reason-text').value = reason;
+    } else {
+      // "Outro motivo" — botão ✏️ selecionado, foco no textarea
+      const btns = document.querySelectorAll('.reject-reason-btn');
+      if (btns.length) btns[btns.length - 1].classList.add('selected');
+      document.getElementById('reject-reason-text').focus();
+    }
+    refreshRejectPreview();
+  }
+
+  document.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'reject-reason-text') {
+      _selectedRejectReason = e.target.value;
+      refreshRejectPreview();
+    }
+  });
+
+  function refreshRejectPreview() {
+    const item = _pendingById[_currentPendingId];
+    if (!item) return;
+    document.getElementById('reject-message-preview').textContent = previewRejectMessage(item, _selectedRejectReason);
+  }
+
+  async function executeRejectPending() {
+    const id = _currentPendingId;
+    const reason = (_selectedRejectReason || '').trim();
+    const notify = document.getElementById('reject-notify-cb').checked;
+    closeRejectPendingModal();
+    await fetch(`/admin/pending/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: 'recusado', reason, notify }),
     });
     loadPending();
   }
@@ -569,14 +770,21 @@
   }
 
   // ---- PROMPT ----
+  let _pendingPromptSave = null; // texto pendente quando há warning de tokens
+
   async function loadPrompt() {
     document.getElementById('prompt-textarea').value = 'Carregando...';
+    document.getElementById('prompt-meta').textContent = '';
     const res = await fetch('/admin/config', { headers: { Authorization: `Bearer ${token}` } });
     const data = await res.json();
     document.getElementById('prompt-textarea').value = data.system_prompt || '';
+    const chars = (data.system_prompt || '').length;
+    const updated = data.updated_at ? new Date(data.updated_at).toLocaleString('pt-BR') : '';
+    document.getElementById('prompt-meta').textContent =
+      `${chars.toLocaleString('pt-BR')} chars · última edição ${updated}`;
   }
 
-  async function savePrompt() {
+  async function savePrompt(force = false) {
     const prompt = document.getElementById('prompt-textarea').value;
     const statusEl = document.getElementById('save-status');
     statusEl.className = '';
@@ -585,16 +793,111 @@
     const res = await fetch('/admin/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ system_prompt: prompt }),
+      body: JSON.stringify({ system_prompt: prompt, force }),
     });
     const data = await res.json();
+
+    if (res.status === 409 && data.requiresConfirmation && data.missingTokens) {
+      // Mostra modal pedindo confirmação
+      _pendingPromptSave = prompt;
+      const list = document.getElementById('token-warning-list');
+      list.innerHTML = data.missingTokens
+        .map((t) => `<li><code>${escapeHtml(t.token)}</code> — ${escapeHtml(t.label)}</li>`)
+        .join('');
+      document.getElementById('token-warning-modal').style.display = 'flex';
+      statusEl.textContent = '';
+      return;
+    }
+
     if (data.ok) {
       statusEl.className = 'save-status';
       statusEl.textContent = '✓ Salvo com sucesso!';
       setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      // Recarrega meta info
+      loadPrompt();
+      // Se painel de histórico aberto, atualiza
+      if (document.getElementById('history-panel').style.display !== 'none') {
+        loadHistory();
+      }
     } else {
       statusEl.className = 'save-error';
       statusEl.textContent = '✗ Erro ao salvar: ' + (data.error || 'desconhecido');
+    }
+  }
+
+  function closeTokenWarningModal() {
+    document.getElementById('token-warning-modal').style.display = 'none';
+    _pendingPromptSave = null;
+    document.getElementById('save-status').textContent = '';
+  }
+
+  function confirmSaveWithMissingTokens() {
+    document.getElementById('token-warning-modal').style.display = 'none';
+    if (_pendingPromptSave !== null) {
+      _pendingPromptSave = null;
+      savePrompt(true);
+    }
+  }
+
+  // ---- HISTÓRICO DO PROMPT ----
+  function toggleHistoryPanel() {
+    const panel = document.getElementById('history-panel');
+    if (panel.style.display === 'none' || !panel.style.display) {
+      panel.style.display = 'block';
+      loadHistory();
+    } else {
+      panel.style.display = 'none';
+    }
+  }
+
+  async function loadHistory() {
+    const list = document.getElementById('history-list');
+    list.innerHTML = '<div style="color:#aaa; font-size:13px;">Carregando histórico…</div>';
+    const res = await fetch('/admin/config/history', { headers: { Authorization: `Bearer ${token}` } });
+    const items = await res.json();
+    if (!items.length) {
+      list.innerHTML = '<div style="color:#aaa; font-size:13px;">Nenhuma versão arquivada ainda.</div>';
+      return;
+    }
+    list.innerHTML = items.map((h) => {
+      const when = new Date(h.saved_at).toLocaleString('pt-BR');
+      const note = h.notes ? `<div style="font-size:12px; color:#666; margin-top:4px; font-style:italic;">${escapeHtml(h.notes)}</div>` : '';
+      const by = h.saved_by || 'admin';
+      return `
+        <div style="border:1px solid #e8e0d8; border-radius:8px; padding:12px; margin-bottom:10px;">
+          <div style="font-size:13px; font-weight:600; color:#2d2d2d;">${when}</div>
+          <div style="font-size:11px; color:#999; margin-top:2px;">${escapeHtml(by)} · ${h.prompt_chars.toLocaleString('pt-BR')} chars</div>
+          ${note}
+          <div style="display:flex; gap:6px; margin-top:8px;">
+            <button onclick="previewHistoryVersion(${h.id})" style="background:none; border:1px solid #ddd; padding:5px 12px; border-radius:6px; font-size:12px; cursor:pointer; color:#666;">Ver</button>
+            <button onclick="restoreHistoryVersion(${h.id})" style="background:#8b1a2e; border:none; padding:5px 12px; border-radius:6px; font-size:12px; cursor:pointer; color:#fff; font-weight:600;">↩ Restaurar</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  async function previewHistoryVersion(id) {
+    const res = await fetch(`/admin/config/history/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (!confirm(`Carregar essa versão no editor (sem salvar)?\n\nSalva em: ${new Date(data.saved_at).toLocaleString('pt-BR')}\nTamanho: ${data.system_prompt?.length || 0} chars`)) return;
+    document.getElementById('prompt-textarea').value = data.system_prompt || '';
+    document.getElementById('save-status').className = '';
+    document.getElementById('save-status').textContent = '👀 Carregado da versão #' + id + ' — não salvo ainda';
+  }
+
+  async function restoreHistoryVersion(id) {
+    if (!confirm('Restaurar essa versão? A versão atual será arquivada no histórico antes de ser sobrescrita.')) return;
+    const res = await fetch(`/admin/config/restore/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (data.ok) {
+      alert('Versão restaurada. O cache da Flora atualiza em até 30 segundos.');
+      loadPrompt();
+      loadHistory();
+    } else {
+      alert('Erro ao restaurar: ' + (data.error || 'desconhecido'));
     }
   }
 

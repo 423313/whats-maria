@@ -927,6 +927,14 @@ async function flushSession(sessionId: string): Promise<void> {
   ];
   const CARDS_TOKEN = '[CARDS_CURSO]';
 
+  // Blocos estruturados que devem ser detectados e REMOVIDOS do texto enviado
+  // pra cliente. Eles servem só pra disparar notificação interna pra Mariana.
+  const PENDING_BLOCK_REGEX =
+    /---\s*(SOLICITAÇÃO DE AGENDAMENTO|LEAD DE CURSO)\s*---[\s\S]*?(?:---+|\n\s*$)/gi;
+
+  // Token simples de escalação (ex: [ESCALAR_MARIANA:medico]).
+  const ESCALAR_TOKEN_REGEX = /\[ESCALAR_MARIANA:([a-z_]+)\]/gi;
+
   for (let i = 0; i < mensagens.length; i++) {
     // Verifica a janela antes de CADA mensagem — inclusive a primeira.
     // O runAgent pode levar 2-4s; Mariana pode enviar um áudio durante esse tempo.
@@ -943,7 +951,18 @@ async function flushSession(sessionId: string): Promise<void> {
     const rawText = mensagens[i]!;
     const hasTabela = rawText.includes(TABELA_TOKEN);
     const hasCards = rawText.includes(CARDS_TOKEN);
-    const text = rawText.replace(TABELA_TOKEN, '').replace(CARDS_TOKEN, '').trim();
+
+    // Captura motivos de escalação ANTES de remover do texto.
+    const escalarMatches = [...rawText.matchAll(ESCALAR_TOKEN_REGEX)];
+    const escalarMotivos = escalarMatches.map((m) => m[1]!.toLowerCase());
+
+    const text = rawText
+      .replace(TABELA_TOKEN, '')
+      .replace(CARDS_TOKEN, '')
+      .replace(PENDING_BLOCK_REGEX, '')
+      .replace(ESCALAR_TOKEN_REGEX, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
     const pendingId = await persistAssistantPending({
       sessionId,
       instance,
@@ -1004,6 +1023,11 @@ async function flushSession(sessionId: string): Promise<void> {
       if (i === mensagens.length - 1) {
         const allText = mensagens.join('\n');
         void handlePendingActions(sessionId, allText);
+      }
+
+      // Escalação genérica: pra cada motivo capturado, notifica Mariana
+      for (const motivo of escalarMotivos) {
+        void notifyMarianaEscalation(sessionId, motivo, text);
       }
     } catch (err) {
       const errorDetails =
@@ -1131,6 +1155,84 @@ async function handlePendingActions(
     logger.warn(
       { err: err instanceof Error ? err.message : String(err) },
       'notificação Mariana falhou',
+    );
+  }
+}
+
+/**
+ * Notifica Mariana de uma escalação genérica (médico, cancelar, dúvida etc).
+ * Chamado quando Flora emite o token [ESCALAR_MARIANA:motivo].
+ *
+ * Faz dedup leve: não envia duas notificações com o mesmo motivo na mesma
+ * sessão num intervalo de 30 minutos (evita spam se cliente repetir).
+ */
+const recentEscalations = new Map<string, number>();
+const ESCALATION_DEDUP_WINDOW_MS = 30 * 60 * 1000;
+
+const ESCALATION_LABELS: Record<string, { emoji: string; label: string }> = {
+  medico: { emoji: '🚨', label: 'Caso médico/sensível' },
+  cancelar: { emoji: '⚠️', label: 'Pedido de cancelamento' },
+  remarcar: { emoji: '⚠️', label: 'Pedido de remarcação' },
+  reembolso: { emoji: '⚠️', label: 'Pedido de reembolso' },
+  reclamacao: { emoji: '⚠️', label: 'Reclamação' },
+  duvida: { emoji: '❓', label: 'Dúvida não respondida' },
+  operacional: { emoji: '❓', label: 'Dúvida operacional' },
+  outro: { emoji: 'ℹ️', label: 'Encaminhamento' },
+};
+
+async function notifyMarianaEscalation(
+  sessionId: string,
+  motivo: string,
+  contextText: string,
+): Promise<void> {
+  if (!env.MARIANA_NOTIFY_PHONE || !env.EVOLUTION_INSTANCE) return;
+
+  const dedupKey = `${sessionId}::${motivo}`;
+  const now = Date.now();
+  const last = recentEscalations.get(dedupKey);
+  if (last && now - last < ESCALATION_DEDUP_WINDOW_MS) {
+    logger.debug({ session_id: sessionId, motivo }, 'escalation dedup — skipped');
+    return;
+  }
+  recentEscalations.set(dedupKey, now);
+
+  const phone = sessionId.replace('@s.whatsapp.net', '');
+  const labels = ESCALATION_LABELS[motivo] ?? ESCALATION_LABELS['outro']!;
+
+  // Tenta pegar nome da cliente
+  let clientName: string | null = null;
+  try {
+    const { data } = await supabase
+      .from('chat_control')
+      .select('client_name')
+      .eq('session_id', sessionId)
+      .maybeSingle();
+    clientName = data?.client_name ?? null;
+  } catch {
+    // ignore
+  }
+
+  const trimmed = contextText.length > 200
+    ? contextText.slice(0, 200).trim() + '…'
+    : contextText.trim();
+
+  const lines = [
+    `${labels.emoji} ${labels.label}`,
+    clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`,
+    trimmed ? `Última msg da Flora: "${trimmed}"` : null,
+    `WhatsApp: ${phone}`,
+  ].filter((l): l is string => Boolean(l));
+
+  try {
+    const evolution = getEvolutionClient();
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) await delay(800);
+      await evolution.sendText(env.EVOLUTION_INSTANCE, env.MARIANA_NOTIFY_PHONE, lines[i]!);
+    }
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), motivo, session_id: sessionId },
+      'notifyMarianaEscalation falhou',
     );
   }
 }

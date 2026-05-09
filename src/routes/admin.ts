@@ -7,6 +7,10 @@ import { join, dirname } from 'path';
 import { runWeeklyReview } from '../services/weekly-review.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 import { logger } from '../lib/logger.js';
+import {
+  buildAvailabilityContext,
+  invalidateAvailabilityCache,
+} from '../services/calendar-availability.js';
 
 // Tokens críticos que NÃO podem ser removidos sem confirmação explícita.
 // Se um save remove qualquer um deles, a UI mostra warning antes de aplicar.
@@ -92,6 +96,16 @@ function checkAuth(req: { headers: Record<string, string | string[] | undefined>
 }
 
 export async function adminRoutes(app: FastifyInstance) {
+  // Debug: retorna o bloco de disponibilidade exato que vai injetado no prompt.
+  // Útil pra confirmar se o filtro do Calendar está funcionando.
+  app.get('/admin/availability', async (req, reply) => {
+    if (!checkAuth(req)) return reply.code(401).send({ error: 'unauthorized' });
+    const refresh = (req.query as { refresh?: string }).refresh === '1';
+    if (refresh) invalidateAvailabilityCache();
+    const text = await buildAvailabilityContext();
+    return reply.type('text/plain').send(text);
+  });
+
   // Serve o HTML do painel
   app.get('/admin', async (_req, reply) => {
     const htmlPath = join(__dirname, '../admin/index.html');

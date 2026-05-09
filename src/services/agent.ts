@@ -2,6 +2,7 @@ import { logger } from '../lib/logger.js';
 import { getOpenAIClient } from '../lib/openai.js';
 import { supabase } from '../lib/supabase.js';
 import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-config.js';
+import { buildAvailabilityContext } from './calendar-availability.js';
 
 export const MEDIA_FALLBACK =
   'oi, ainda não consigo ouvir áudios ou ver imagens por aqui, pode me escrever em texto?';
@@ -139,11 +140,16 @@ function buildDateContext(): string {
   );
 }
 
-function buildSystemMessage(config: AgentConfig, clientName?: string | null): string {
+function buildSystemMessage(
+  config: AgentConfig,
+  clientName?: string | null,
+  availabilityContext?: string,
+): string {
   const dateContext = buildDateContext();
+  const availability = availabilityContext ? availabilityContext + '\n' : '';
 
   if (!clientName?.trim()) {
-    return dateContext + '\n' + config.system_prompt;
+    return dateContext + '\n' + availability + config.system_prompt;
   }
 
   const sessionContext =
@@ -151,7 +157,7 @@ function buildSystemMessage(config: AgentConfig, clientName?: string | null): st
     `Esta cliente já se identificou anteriormente. Nome: ${clientName.trim()}.\n` +
     `USE esse nome quando for natural. NÃO peça o nome novamente — você já sabe.\n`;
 
-  return dateContext + '\n' + sessionContext + '\n' + config.system_prompt;
+  return dateContext + '\n' + availability + sessionContext + '\n' + config.system_prompt;
 }
 
 async function loadClientName(sessionId: string): Promise<string | null> {
@@ -170,12 +176,13 @@ export async function runAgent(input: RunAgentInput): Promise<AgentReply> {
   }
   const openaiKey = resolveOpenAIKey(config);
 
-  const [history, clientName] = await Promise.all([
+  const [history, clientName, availabilityContext] = await Promise.all([
     loadHistory(input.sessionId, config.history_limit),
     loadClientName(input.sessionId),
+    buildAvailabilityContext(),
   ]);
 
-  const systemMessage = buildSystemMessage(config, clientName);
+  const systemMessage = buildSystemMessage(config, clientName, availabilityContext);
 
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system', content: systemMessage },

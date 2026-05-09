@@ -22,6 +22,12 @@ const envSchema = z.object({
 
   REVIEW_NOTIFY_PHONE: z.string().optional(),
   MARIANA_NOTIFY_PHONE: z.string().optional(),
+
+  // Google Calendar — leitura da agenda da Mariana sincronizada pelo belasis-sync.
+  // Ambas opcionais: se ausentes, o agente continua funcionando, só não tem
+  // contexto de disponibilidade real (cai no fallback do calendar-availability).
+  GOOGLE_SERVICE_ACCOUNT_KEY: z.string().optional(),
+  GOOGLE_CALENDAR_ID: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

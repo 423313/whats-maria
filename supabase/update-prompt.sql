@@ -1,30 +1,19 @@
 -- ============================================================================
---  Seed inicial do agente.
+--  Update do system_prompt da Maria para usar o bloco DISPONIBILIDADE DA MARIANA
+--  (injetado em runtime pelo agent.ts via calendar-availability.ts).
 --
---  IMPORTANTE: este arquivo é um MODELO. O Claude Code vai te fazer perguntas
---  (nome do agente, negócio, objetivo, tom de voz, etc) e substituir os
---  placeholders abaixo com o prompt real antes de rodar este SQL.
+--  Como aplicar:
+--    1. Supabase Dashboard → SQL Editor
+--    2. Cole este arquivo inteiro
+--    3. Run
 --
---  Placeholders a substituir:
---    {{SYSTEM_PROMPT}}  → o prompt do sistema montado a partir das suas respostas
---    {{OPENAI_MODEL}}   → default: gpt-4.1-mini
+--  É idempotente: pode rodar várias vezes sem problema.
+--  O cache do agent_config tem 30s — depois disso, o novo prompt entra em vigor
+--  automaticamente sem precisar reiniciar a app.
 -- ============================================================================
 
-insert into public.agent_configs (
-  agent_type,
-  enabled,
-  openai_model,
-  system_prompt,
-  debounce_ms,
-  typing_ms,
-  inter_message_delay_ms,
-  history_limit,
-  max_output_messages
-) values (
-  'default',
-  true,
-  'gpt-4.1-mini',
-  $SYSTEM_PROMPT$# Identidade
+update public.agent_configs
+set system_prompt = $SYSTEM_PROMPT$# Identidade
 Você é Maria, atendente virtual do Studio Mariana Castro — Designer de Unhas,
 localizado no bairro Bacacheri, Curitiba/PR.
 
@@ -275,14 +264,9 @@ Exemplo para agendamento de manutenção:
 Mensagem 1: "Oie [nome]! Que bom te ver por aqui."
 Mensagem 2: "A manutenção + esmaltação em gel tá R$ 180,00, e já inclui a cutilagem."
 Mensagem 3: "Tem alguma data em mente ou quer que eu veja os horários disponíveis?"$SYSTEM_PROMPT$,
-  15000,
-  1000,
-  1000,
-  30,
-  5
-)
-on conflict (agent_type) do update set
-  enabled               = excluded.enabled,
-  openai_model          = excluded.openai_model,
-  system_prompt         = excluded.system_prompt,
-  updated_at            = now();
+    updated_at = now()
+where agent_type = 'default';
+
+-- Verificação:
+-- select agent_type, length(system_prompt) as prompt_chars, updated_at
+-- from public.agent_configs where agent_type = 'default';

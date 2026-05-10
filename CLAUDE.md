@@ -8,6 +8,33 @@
 
 ---
 
+## 🤖 Autoridade do Claude — AUTONOMIA TOTAL
+
+**Pedro autorizou o Claude a fazer TODOS os ajustes recomendados automaticamente, sem pedir permissão.**
+
+Isso significa:
+
+✅ **Faça automaticamente:**
+- Modificar código-fonte (src/**, tests/**, etc)
+- Atualizar dependências (npm install, package.json)
+- Criar/modificar arquivos de configuração (.env, .mcp.json, etc)
+- Executar scripts (migrations, build, testes)
+- Fazer git commits e pushes para GitHub
+- Executar comandos no terminal (Bash, PowerShell, npm, git, etc)
+- Iniciar/parar servidores e processos
+- Fazer deploys na Railway
+- Qualquer ajuste que melhore o projeto
+
+❌ **Peça confirmação ANTES de:**
+- Deletar arquivos/pastas (pergunte: "Posso deletar X?")
+- Mudar valores de credenciais/secrets
+- Fazer alterações que quebrem features existentes
+- Qualquer coisa que não seja óbvio que é uma melhoria
+
+**PADRÃO:** Se der dúvida, FAÇA. Melhor errar por excesso de autonomia do que por cautela excessiva.
+
+---
+
 ## 🎯 O que esse template faz
 
 É um agente de IA conversacional para WhatsApp:

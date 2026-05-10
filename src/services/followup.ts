@@ -6,6 +6,7 @@ import { getEvolutionClient } from '../lib/evolution.js';
 const FOLLOWUP_AFTER_MS = 60 * 60 * 1000;       // 60 minutos sem resposta → follow-up
 const CLOSE_AFTER_FOLLOWUP_MS = 30 * 60 * 1000; // 30 min após follow-up sem resposta → encerramento
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;         // checar a cada 5 minutos
+const MIN_MESSAGES_FOR_FOLLOWUP = 4;             // mínimo de mensagens na conversa pra ter follow-up
 
 let sweeperHandle: NodeJS.Timeout | null = null;
 
@@ -17,6 +18,13 @@ type FollowupContext =
   | 'prices'       // perguntando preços/serviços
   | 'greeting'     // só disse oi, não avançou
   | 'generic';     // qualquer outro
+
+// Palavras que indicam que o cliente naturalmente encerrou a conversa
+const NATURAL_CLOSURE_KEYWORDS = [
+  'obrigado', 'obrigada', 'valeu', 'tá bom', 'ta bom', 'ok', 'perfeito', 'blz',
+  'certo', 'fechado', 'pode ser', 'show', 'boa', 'beleza', 'tmj', 'abraço',
+  'até mais', 'até logo', 'falou', 'tchau', 'bye', 'flw', 'vlw',
+];
 
 function detectContext(messages: { role: string; content: string }[]): FollowupContext {
   const text = messages
@@ -33,6 +41,30 @@ function detectContext(messages: { role: string; content: string }[]): FollowupC
   if (priceKeywords.some((k) => text.includes(k))) return 'prices';
   if (greetingOnly) return 'greeting';
   return 'generic';
+}
+
+// ─── Verifica se a conversa foi naturalmente encerrada pelo cliente ──────────
+
+function hasNaturalClosure(messages: { role: string; content: string }[]): boolean {
+  if (messages.length === 0) return false;
+
+  // Verifica apenas a última mensagem do cliente (usuário)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role === 'user') {
+      const content = msg.content.toLowerCase().trim();
+      return NATURAL_CLOSURE_KEYWORDS.some((keyword) =>
+        content.includes(keyword) || content.startsWith(keyword)
+      );
+    }
+  }
+  return false;
+}
+
+// ─── Verifica se a conversa é muito curta (apenas saudação) ──────────────────
+
+function isTooShort(messages: { role: string; content: string }[]): boolean {
+  return messages.length < MIN_MESSAGES_FOR_FOLLOWUP;
 }
 
 // ─── Monta a mensagem de follow-up conforme o contexto ───────────────────────
@@ -109,6 +141,7 @@ async function sweepFollowups(): Promise<void> {
   if (!env.EVOLUTION_INSTANCE) return;
 
   const cutoff = new Date(Date.now() - FOLLOWUP_AFTER_MS).toISOString();
+  const tooRecentCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString(); // conversas com menos de 15 min
 
   // Busca última mensagem de cada sessão
   const { data: sessions, error } = await supabase
@@ -123,10 +156,14 @@ async function sweepFollowups(): Promise<void> {
 
   // Agrupa: pega a mensagem mais recente por sessão
   const latestMap = new Map<string, { role: string; created_at: string }>();
+  const firstMessageMap = new Map<string, string>(); // primeira mensagem pra detectar conversas novas
+
   for (const row of sessions ?? []) {
     if (!latestMap.has(row.session_id)) {
       latestMap.set(row.session_id, { role: row.role, created_at: row.created_at });
     }
+    // Sempre atualiza o mapa de primeira mensagem (pois está em ordem decrescente, a última será a primeira)
+    firstMessageMap.set(row.session_id, row.created_at);
   }
 
   for (const [sessionId, latest] of latestMap) {
@@ -137,12 +174,13 @@ async function sweepFollowups(): Promise<void> {
     // Verifica se já enviou follow-up ou se está pausada
     const { data: control } = await supabase
       .from('chat_control')
-      .select('ai_paused, followup_sent_at, instance, mariana_last_manual_at')
+      .select('ai_paused, followup_sent_at, instance, mariana_last_manual_at, skip_followup')
       .eq('session_id', sessionId)
       .maybeSingle();
 
     if (control?.ai_paused) continue;         // humano no controle, não interferir
     if (control?.followup_sent_at) continue;  // já enviou follow-up nessa sessão
+    if (control?.skip_followup) continue;     // cliente marcou pra não ter follow-up
 
     // Janela de 24h: Mariana enviou mensagem manual recentemente
     if (control?.mariana_last_manual_at) {
@@ -155,10 +193,43 @@ async function sweepFollowups(): Promise<void> {
       .from('chat_messages')
       .select('role, content')
       .eq('session_id', sessionId)
-      .order('created_at', { ascending: false })
-      .limit(10);
+      .order('created_at', { ascending: true });
 
-    const context = detectContext((msgs ?? []).reverse());
+    if (!msgs || msgs.length === 0) continue;
+
+    // ✅ VERIFICAÇÕES INTELIGENTES ANTES DE ENVIAR FOLLOW-UP
+
+    // 0. Conversa muito recente (menos de 15 min): não enviar follow-up ainda
+    const firstMsgTime = firstMessageMap.get(sessionId);
+    if (firstMsgTime && firstMsgTime > tooRecentCutoff) {
+      continue; // Conversa iniciada recentemente, esperar mais um pouco
+    }
+
+    // 1. Conversa muito curta (só cumprimentos): não enviar follow-up
+    if (isTooShort(msgs)) {
+      logger.info(
+        { session_id: sessionId, total_messages: msgs.length },
+        'followup: conversa muito curta, pulando follow-up',
+      );
+      continue;
+    }
+
+    // 2. Cliente finalizou naturalmente (disse "obrigado", "ok", etc): não enviar follow-up
+    if (hasNaturalClosure(msgs)) {
+      logger.info({ session_id: sessionId }, 'followup: cliente encerrou naturalmente, pulando follow-up');
+      // Marca pra não tentar mais follow-ups nessa sessão
+      await supabase
+        .from('chat_control')
+        .upsert({
+          session_id: sessionId,
+          instance: control?.instance ?? env.EVOLUTION_INSTANCE,
+          skip_followup: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'session_id' });
+      continue;
+    }
+
+    const context = detectContext(msgs);
     const lines = buildFollowupMessage(context);
     const instance = control?.instance ?? env.EVOLUTION_INSTANCE;
 

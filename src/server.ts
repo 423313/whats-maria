@@ -14,8 +14,11 @@ import {
 import { startFollowupSweeper, stopFollowupSweeper } from './services/followup.js';
 import { startMarianaMonitor, stopMarianaMonitor } from './services/mariana-monitor.js';
 import { startWeeklyReviewSweeper, stopWeeklyReviewSweeper } from './services/weekly-review.js';
+import { runMigrations } from './lib/migrations.js';
 
 async function main() {
+  // Executa migrações de banco na inicialização
+  await runMigrations();
   const app = Fastify({
     loggerInstance: logger,
     trustProxy: true,

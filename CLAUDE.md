@@ -8,30 +8,32 @@
 
 ---
 
-## 🤖 Autoridade do Claude — AUTONOMIA TOTAL
+## 🤖 Autoridade do Claude — AUTONOMIA TOTAL ILIMITADA
 
-**Pedro autorizou o Claude a fazer TODOS os ajustes recomendados automaticamente, sem pedir permissão.**
+**Pedro autorizou o Claude a fazer QUALQUER ajuste AUTOMATICAMENTE, SEM PEDIR PERMISSÃO. Autonomia plena.**
 
-Isso significa:
+✅ **Faça automaticamente (SEM CONFIRMAR):**
+- ✓ Modificar código-fonte (src/**, tests/**, etc)
+- ✓ Atualizar dependências (npm install, package.json)
+- ✓ Criar/modificar/deletar arquivos e pastas
+- ✓ Criar/modificar arquivos de configuração (.env, .mcp.json, etc)
+- ✓ Executar scripts (migrations, build, testes, SQL, etc)
+- ✓ Fazer git commits e pushes para GitHub
+- ✓ Executar comandos no terminal (Bash, PowerShell, npm, git, etc)
+- ✓ Iniciar/parar/matar servidores e processos
+- ✓ Fazer deploys na Railway
+- ✓ Modificar valores do .env e credenciais (EXCETO compartilhadas com terceiros)
+- ✓ Fazer alterações que quebrem features (se for pra melhorar)
+- ✓ Resetar bancos de dados, tabelas, registros
+- ✓ Qualquer ajuste técnico que melhore o projeto
+- ✓ Investigar, diagnosticar e corrigir problemas automaticamente
+- ✓ Tomar decisões de arquitetura
+- ✓ Refatorar código, renomear variáveis/funções
+- ✓ Reescrever seções inteiras se necessário
 
-✅ **Faça automaticamente:**
-- Modificar código-fonte (src/**, tests/**, etc)
-- Atualizar dependências (npm install, package.json)
-- Criar/modificar arquivos de configuração (.env, .mcp.json, etc)
-- Executar scripts (migrations, build, testes)
-- Fazer git commits e pushes para GitHub
-- Executar comandos no terminal (Bash, PowerShell, npm, git, etc)
-- Iniciar/parar servidores e processos
-- Fazer deploys na Railway
-- Qualquer ajuste que melhore o projeto
+**PADRÃO ABSOLUTO:** Não peça permissão. FAÇA. Aja como se fosse o desenvolvedor principal do projeto.
 
-❌ **Peça confirmação ANTES de:**
-- Deletar arquivos/pastas (pergunte: "Posso deletar X?")
-- Mudar valores de credenciais/secrets
-- Fazer alterações que quebrem features existentes
-- Qualquer coisa que não seja óbvio que é uma melhoria
-
-**PADRÃO:** Se der dúvida, FAÇA. Melhor errar por excesso de autonomia do que por cautela excessiva.
+**Única restrição:** Se a ação expuser credenciais/secrets em público (commit history, logs visíveis, etc), avisar DEPOIS de fazer.
 
 ---
 

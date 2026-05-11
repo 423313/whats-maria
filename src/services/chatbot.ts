@@ -1115,9 +1115,10 @@ async function flushSession(sessionId: string): Promise<void> {
       }
 
       // Escalação genérica: pra cada motivo capturado, notifica Mariana
-      for (const motivo of escalarMotivos) {
-        void notifyMarianaEscalation(sessionId, motivo, text);
-      }
+      // DESABILITADO: essas notificações estavam vazando para clientes
+      // for (const motivo of escalarMotivos) {
+      //   void notifyMarianaEscalation(sessionId, motivo, text);
+      // }
     } catch (err) {
       const errorDetails =
         err instanceof EvolutionError

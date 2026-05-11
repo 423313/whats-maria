@@ -1212,7 +1212,21 @@ async function handlePendingActions(
   }
 
   // Notifica Mariana via WhatsApp
-  if (!env.MARIANA_NOTIFY_PHONE || !env.EVOLUTION_INSTANCE) return;
+  if (!env.MARIANA_NOTIFY_PHONE) {
+    logger.warn(
+      { session_id: sessionId, type },
+      'MARIANA_NOTIFY_PHONE não configurada — notificação não será enviada',
+    );
+    return;
+  }
+
+  if (!env.EVOLUTION_INSTANCE) {
+    logger.warn(
+      { session_id: sessionId, type },
+      'EVOLUTION_INSTANCE não configurada — notificação não será enviada',
+    );
+    return;
+  }
 
   try {
     const evolution = getEvolutionClient();
@@ -1236,14 +1250,24 @@ async function handlePendingActions(
 
     lines.push(`WhatsApp: ${phone}`);
 
+    logger.info(
+      { session_id: sessionId, type, to: env.MARIANA_NOTIFY_PHONE, lineCount: lines.length },
+      'enviando notificação para Mariana',
+    );
+
     for (let i = 0; i < lines.length; i++) {
       if (i > 0) await delay(800);
       await evolution.sendText(env.EVOLUTION_INSTANCE, env.MARIANA_NOTIFY_PHONE, lines[i]!);
     }
+
+    logger.info(
+      { session_id: sessionId, type },
+      'notificação enviada com sucesso para Mariana',
+    );
   } catch (err) {
-    logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      'notificação Mariana falhou',
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), session_id: sessionId, type },
+      'notificação para Mariana falhou — verificar MARIANA_NOTIFY_PHONE e EVOLUTION_INSTANCE',
     );
   }
 }

@@ -130,11 +130,14 @@ export async function handleEvolutionWebhook(
     if (detectedJid.endsWith('@s.whatsapp.net')) {
       const earlySessionId = phoneToSessionId(detectedJid.replace('@s.whatsapp.net', ''));
       try {
-        const isEcho = await hasRecentPendingFloraReply(earlySessionId);
+        // Verifica primeiro pelo ID exato (registry in-memory, sem race condition)
+        // e usa DB como fallback para o caso onde messageId não estava disponível.
+        const incomingId = data.key?.id;
+        const isEcho = isFloraEcho(incomingId) || await hasRecentPendingFloraReply(earlySessionId);
         if (isEcho) {
           logger.info(
-            { session_id: earlySessionId, event },
-            'kill-switch global: echo da Flora detectado (pending recente) — janela NÃO ativada',
+            { session_id: earlySessionId, event, matched_id: incomingId },
+            'kill-switch global: echo da Flora detectado — janela NÃO ativada',
           );
         } else {
           await ensureChatControl(earlySessionId, instance, DEFAULT_AGENT_TYPE);
@@ -157,11 +160,15 @@ export async function handleEvolutionWebhook(
       const updateJid = data.key?.remoteJid ?? data.remoteJid ?? '';
       if (updateJid.endsWith('@s.whatsapp.net')) {
         const updateSessionId = phoneToSessionId(updateJid.replace('@s.whatsapp.net', ''));
-        void hasRecentPendingFloraReply(updateSessionId).then(async (isEcho) => {
+        const updateMsgId = data.key?.id;
+        void (isFloraEcho(updateMsgId)
+          ? Promise.resolve(true)
+          : hasRecentPendingFloraReply(updateSessionId)
+        ).then(async (isEcho) => {
           if (isEcho) {
             logger.info(
-              { session_id: updateSessionId },
-              'messages.update fromMe: echo da Flora — janela NÃO ativada',
+              { session_id: updateSessionId, matched_id: updateMsgId },
+              'messages.update fromMe: eco da Flora — janela NÃO ativada',
             );
             return;
           }
@@ -298,18 +305,19 @@ async function handleOutgoingMessage(
   // uma conversa nova (cliente nunca mandou mensagem antes), a linha não
   // existiria e o UPDATE afetaria 0 linhas, deixando a janela inativa.
   await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
-  const isEchoFromFlora = await hasRecentPendingFloraReply(sessionId);
+  const incomingMessageId = data.key?.id ?? null;
+  const isEchoFromFlora = isFloraEcho(incomingMessageId) || await hasRecentPendingFloraReply(sessionId);
   if (!isEchoFromFlora) {
     await updateMarianaManualAt(sessionId);
   } else {
     logger.info(
-      { session_id: sessionId },
-      'handleOutgoingMessage: pending recente detectado — tratado como echo da Flora, janela NÃO ativada',
+      { session_id: sessionId, matched_id: incomingMessageId },
+      'handleOutgoingMessage: eco da Flora detectado — janela NÃO ativada',
     );
   }
 
   // ─── 3. Valida id da mensagem ────────────────────────────────────────────────
-  const evolutionMessageId = data.key?.id ?? null;
+  const evolutionMessageId = incomingMessageId;
   if (!evolutionMessageId) {
     return { status: 'ignored', reason: 'from_me_no_id' };
   }
@@ -765,19 +773,31 @@ async function ensureChatControl(
 }
 
 /**
- * Distingue echo da própria Flora de mensagem manual da Mariana.
- *
- * Quando a Flora chama evolution.sendText, a Evolution dispara webhook
- * MESSAGES_UPSERT com fromMe=true para a mesma mensagem. Sem essa checagem,
- * o kill-switch global ativaria a janela manual de 24h a cada resposta da
- * Flora — bloqueando a si mesma de responder mensagens subsequentes do cliente.
- *
- * Heurística: existe chat_messages role='assistant' com status='pending' e
- * sem evolution_message_id criada nos últimos PENDING_ECHO_WINDOW_MS pra essa
- * sessão. O markAssistantSent em flushSession promove pending→sent assim que
- * o sendText retorna; o webhook de echo costuma chegar nesse mesmo intervalo.
+ * Registry in-memory dos messageIds que a Flora acabou de enviar via sendText.
+ * Registra o ID antes de markAssistantSent para que isFloraEcho() funcione
+ * mesmo quando o webhook de eco chega APÓS a mensagem sair do status 'pending'.
+ * Isso corrige a race condition onde markAssistantSent rodava antes do eco chegar,
+ * fazendo hasRecentPendingFloraReply retornar false e ativar a janela de 24h.
  */
 const PENDING_ECHO_WINDOW_MS = 90_000;
+const floraEchoRegistry = new Map<string, number>(); // messageId → timestamp do envio
+
+function registerFloraEcho(messageId: string): void {
+  floraEchoRegistry.set(messageId, Date.now());
+  // Limpeza proativa de entradas expiradas
+  const cutoff = Date.now() - PENDING_ECHO_WINDOW_MS;
+  for (const [id, ts] of floraEchoRegistry.entries()) {
+    if (ts < cutoff) floraEchoRegistry.delete(id);
+  }
+}
+
+function isFloraEcho(messageId: string | null | undefined): boolean {
+  if (!messageId) return false;
+  const ts = floraEchoRegistry.get(messageId);
+  return ts !== undefined && Date.now() - ts < PENDING_ECHO_WINDOW_MS;
+}
+
+// Fallback via DB: detecta eco quando o messageId não está disponível no registry
 async function hasRecentPendingFloraReply(sessionId: string): Promise<boolean> {
   const cutoff = new Date(Date.now() - PENDING_ECHO_WINDOW_MS).toISOString();
   const { data, error } = await supabase
@@ -976,9 +996,11 @@ async function flushSession(sessionId: string): Promise<void> {
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : String(err), session_id: sessionId },
-      'agent run failed',
+      'agente falhou',
     );
-    mensagens = ['oi, tive um probleminha agora pra te responder, me dá só um instante que eu já volto'];
+    // Fallback: envia mensagem genérica sem tentar aguardar operações que possam
+    // hangar. O buffer será marcado como processado pela lógica normal do loop.
+    mensagens = ['oi, tive um probleminha agora pra te responder, me dá um instante que já volto'];
   }
 
   const TABELA_PRECOS_URL = 'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/precos.jpeg';
@@ -1072,6 +1094,11 @@ async function flushSession(sessionId: string): Promise<void> {
       await delay(typingMs);
       if (text) {
         const result = await evolution.sendText(instance, sessionId, text);
+        // Registra o ID ANTES de markAssistantSent para que isFloraEcho() detecte
+        // o webhook de eco mesmo que ele chegue após a mensagem sair do status 'pending'.
+        if (result.messageId) {
+          registerFloraEcho(result.messageId);
+        }
         if (pendingId) {
           await markAssistantSent(pendingId, result.messageId || null);
         }

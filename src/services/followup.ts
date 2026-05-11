@@ -143,10 +143,16 @@ async function sweepFollowups(): Promise<void> {
   const cutoff = new Date(Date.now() - FOLLOWUP_AFTER_MS).toISOString();
   const tooRecentCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString(); // conversas com menos de 15 min
 
-  // Busca última mensagem de cada sessão
+  // Janela máxima de 48h: evita que sessões antigas sejam reativadas após restart/deploy.
+  // Sem esse limite, o sweeper dispararia follow-ups para TODOS os históricos de uma vez
+  // sempre que o servidor reiniciasse (ex: após atualização de código ou prompt).
+  const maxAgeWindow = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  // Busca última mensagem de cada sessão (apenas com atividade nas últimas 48h)
   const { data: sessions, error } = await supabase
     .from('chat_messages')
     .select('session_id, role, created_at')
+    .gte('created_at', maxAgeWindow)
     .order('created_at', { ascending: false });
 
   if (error) {

@@ -11,6 +11,7 @@ import {
   buildAvailabilityContext,
   invalidateAvailabilityCache,
 } from '../services/calendar-availability.js';
+import { registerFloraEcho } from '../lib/echo-registry.js';
 
 // Tokens críticos que NÃO podem ser removidos sem confirmação explícita.
 // Se um save remove qualquer um deles, a UI mostra warning antes de aplicar.
@@ -277,7 +278,9 @@ export async function adminRoutes(app: FastifyInstance) {
       if (message) {
         try {
           const evolution = getEvolutionClient();
-          await evolution.sendText(env.EVOLUTION_INSTANCE, pending.session_id, message);
+          const result = await evolution.sendText(env.EVOLUTION_INSTANCE, pending.session_id, message);
+          // Registra ID para que o webhook de eco não ative janela manual da Mariana
+          if (result.messageId) registerFloraEcho(result.messageId);
           // Persiste a msg como sent pra aparecer no histórico do chat
           await supabase.from('chat_messages').insert({
             session_id: pending.session_id,

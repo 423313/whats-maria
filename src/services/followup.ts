@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { getEvolutionClient } from '../lib/evolution.js';
+import { registerFloraEcho } from '../lib/echo-registry.js';
 
 const FOLLOWUP_AFTER_MS = 60 * 60 * 1000;       // 60 minutos sem resposta → follow-up
 const CLOSE_AFTER_FOLLOWUP_MS = 30 * 60 * 1000; // 30 min após follow-up sem resposta → encerramento
@@ -243,7 +244,9 @@ async function sweepFollowups(): Promise<void> {
       const evolution = getEvolutionClient();
       for (let i = 0; i < lines.length; i++) {
         if (i > 0) await delay(1200);
-        await evolution.sendText(instance, sessionId, lines[i]!);
+        const result = await evolution.sendText(instance, sessionId, lines[i]!);
+        // Registra ID para que o webhook de eco não ative janela manual da Mariana
+        if (result.messageId) registerFloraEcho(result.messageId);
       }
 
       // Registra que o follow-up foi enviado
@@ -316,7 +319,9 @@ async function sweepCloseSessions(): Promise<void> {
       const evolution = getEvolutionClient();
       for (let i = 0; i < lines.length; i++) {
         if (i > 0) await delay(1200);
-        await evolution.sendText(instance, control.session_id, lines[i]!);
+        const result = await evolution.sendText(instance, control.session_id, lines[i]!);
+        // Registra ID para que o webhook de eco não ative janela manual da Mariana
+        if (result.messageId) registerFloraEcho(result.messageId);
       }
 
       await supabase

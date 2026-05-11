@@ -14,6 +14,11 @@ import {
   registerFlushHandler,
 } from './buffer.js';
 import { isProcessableMedia, processMedia, mediaLabel } from './media.js';
+import {
+  PENDING_ECHO_WINDOW_MS,
+  registerFloraEcho,
+  isFloraEcho,
+} from '../lib/echo-registry.js';
 
 // URL do painel admin — incluída no rodapé das notificações pra Mariana
 const ADMIN_PANEL_URL = 'https://ia-whatsapp-app-production-d07a.up.railway.app/admin';
@@ -772,30 +777,9 @@ async function ensureChatControl(
   }
 }
 
-/**
- * Registry in-memory dos messageIds que a Flora acabou de enviar via sendText.
- * Registra o ID antes de markAssistantSent para que isFloraEcho() funcione
- * mesmo quando o webhook de eco chega APÓS a mensagem sair do status 'pending'.
- * Isso corrige a race condition onde markAssistantSent rodava antes do eco chegar,
- * fazendo hasRecentPendingFloraReply retornar false e ativar a janela de 24h.
- */
-const PENDING_ECHO_WINDOW_MS = 90_000;
-const floraEchoRegistry = new Map<string, number>(); // messageId → timestamp do envio
-
-function registerFloraEcho(messageId: string): void {
-  floraEchoRegistry.set(messageId, Date.now());
-  // Limpeza proativa de entradas expiradas
-  const cutoff = Date.now() - PENDING_ECHO_WINDOW_MS;
-  for (const [id, ts] of floraEchoRegistry.entries()) {
-    if (ts < cutoff) floraEchoRegistry.delete(id);
-  }
-}
-
-function isFloraEcho(messageId: string | null | undefined): boolean {
-  if (!messageId) return false;
-  const ts = floraEchoRegistry.get(messageId);
-  return ts !== undefined && Date.now() - ts < PENDING_ECHO_WINDOW_MS;
-}
+// Echo registry centralizado em lib/echo-registry.ts — usado também por
+// followup.ts e admin.ts para registrar IDs de mensagens que Flora envia
+// fora deste módulo (follow-ups, mensagens auto pós-decisão de pendência).
 
 // Fallback via DB: detecta eco quando o messageId não está disponível no registry
 async function hasRecentPendingFloraReply(sessionId: string): Promise<boolean> {
@@ -1105,12 +1089,21 @@ async function flushSession(sessionId: string): Promise<void> {
       }
       if (hasTabela) {
         await delay(interMsgMs);
-        await evolution.sendMedia(instance, sessionId, TABELA_PRECOS_URL);
+        const mediaResult = await evolution.sendMedia(instance, sessionId, TABELA_PRECOS_URL);
+        // Registra o ID do envio de mídia também — o webhook de eco do sendMedia
+        // vem como fromMe=true e seria interpretado erroneamente como mensagem
+        // manual da Mariana (ativando a janela de 24h indevidamente).
+        if (mediaResult.messageId) {
+          registerFloraEcho(mediaResult.messageId);
+        }
       }
       if (hasCards) {
         for (const cardUrl of CARDS_CURSO_URLS) {
           await delay(interMsgMs);
-          await evolution.sendMedia(instance, sessionId, cardUrl);
+          const mediaResult = await evolution.sendMedia(instance, sessionId, cardUrl);
+          if (mediaResult.messageId) {
+            registerFloraEcho(mediaResult.messageId);
+          }
         }
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);

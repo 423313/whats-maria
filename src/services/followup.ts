@@ -20,6 +20,33 @@ type FollowupContext =
   | 'greeting'     // só disse oi, não avançou
   | 'generic';     // qualquer outro
 
+// ─── Reseta o estado de follow-up quando a cliente responde ──────────────────
+// Exportado para que chatbot.ts possa chamar e para testes unitários.
+
+export async function resetFollowupState(sessionId: string): Promise<void> {
+  // Cooldown de 24h: só reseta o ciclo se o último envio foi há mais de 24h.
+  // Impede que a Flora envie um follow-up a cada hora quando a cliente responde
+  // e some novamente várias vezes no mesmo dia. Máximo: 1 ciclo por sessão a cada 24h.
+  const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabase
+    .from('chat_control')
+    .update({
+      followup_sent_at: null,
+      followup_closed_at: null,
+      followup_context: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('session_id', sessionId)
+    .not('followup_sent_at', 'is', null)   // só atualiza se havia follow-up pendente
+    .lt('followup_sent_at', cutoff24h);    // e só se o envio foi há mais de 24h (cooldown)
+  if (error) {
+    logger.debug({ err: error.message, session_id: sessionId }, 'resetFollowupState noop ou erro');
+  } else {
+    logger.debug({ session_id: sessionId }, 'ciclo de follow-up resetado (cooldown 24h expirado)');
+  }
+}
+
 // Palavras que indicam que o cliente naturalmente encerrou a conversa
 const NATURAL_CLOSURE_KEYWORDS = [
   'obrigado', 'obrigada', 'valeu', 'tá bom', 'ta bom', 'ok', 'perfeito', 'blz',
@@ -27,7 +54,7 @@ const NATURAL_CLOSURE_KEYWORDS = [
   'até mais', 'até logo', 'falou', 'tchau', 'bye', 'flw', 'vlw',
 ];
 
-function detectContext(messages: { role: string; content: string }[]): FollowupContext {
+export function detectContext(messages: { role: string; content: string }[]): FollowupContext {
   const text = messages
     .map((m) => m.content.toLowerCase())
     .join(' ');
@@ -46,7 +73,7 @@ function detectContext(messages: { role: string; content: string }[]): FollowupC
 
 // ─── Verifica se a conversa foi naturalmente encerrada pelo cliente ──────────
 
-function hasNaturalClosure(messages: { role: string; content: string }[]): boolean {
+export function hasNaturalClosure(messages: { role: string; content: string }[]): boolean {
   if (messages.length === 0) return false;
 
   // Verifica apenas a última mensagem do cliente (usuário)
@@ -64,7 +91,7 @@ function hasNaturalClosure(messages: { role: string; content: string }[]): boole
 
 // ─── Verifica se a conversa é muito curta (apenas saudação) ──────────────────
 
-function isTooShort(messages: { role: string; content: string }[]): boolean {
+export function isTooShort(messages: { role: string; content: string }[]): boolean {
   return messages.length < MIN_MESSAGES_FOR_FOLLOWUP;
 }
 

@@ -76,10 +76,12 @@ async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow
   return ((data ?? []) as HistoryRow[]).reverse();
 }
 
+// Exportado para testes unitários — permite verificar que cada dia da semana
+// tem o status correto (open/closed) sem depender de Date.
 // Dia da semana → status do studio (atende ou fechado)
 // Mariana: terça (2) a sexta (5) das 09h-16h, sábado (6) das 08h-12h
 // Fechado: segunda (1) e domingo (0)
-const STUDIO_STATUS_BY_WEEKDAY: Record<number, { aberto: boolean; horario: string; profissionais: string }> = {
+export const STUDIO_STATUS_BY_WEEKDAY: Record<number, { aberto: boolean; horario: string; profissionais: string }> = {
   0: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
   1: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
   2: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
@@ -94,7 +96,7 @@ const STUDIO_STATUS_BY_WEEKDAY: Record<number, { aberto: boolean; horario: strin
  * Intl.DateTimeFormat (não depende do fuso do servidor — funciona no Railway,
  * em UTC, ou em qualquer outro ambiente).
  */
-function buildDateContext(): string {
+export function buildDateContext(): string {
   const now = new Date();
   const fmt = new Intl.DateTimeFormat('pt-BR', {
     timeZone: 'America/Sao_Paulo',

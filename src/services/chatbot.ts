@@ -13,6 +13,7 @@ import {
   peekPendingBuffer,
   registerFlushHandler,
 } from './buffer.js';
+import { resetFollowupState } from './followup.js';
 import { isProcessableMedia, processMedia, mediaLabel } from './media.js';
 import {
   PENDING_ECHO_WINDOW_MS,
@@ -844,30 +845,6 @@ async function saveClientName(sessionId: string, name: string): Promise<void> {
     logger.warn({ err: error.message, session_id: sessionId }, 'saveClientName failed');
   } else {
     logger.info({ session_id: sessionId, name: clean }, 'nome da cliente registrado');
-  }
-}
-
-async function resetFollowupState(sessionId: string): Promise<void> {
-  // Cooldown de 24h: só reseta o ciclo de follow-up se o último envio foi há mais de 24h.
-  // Isso impede que a Flora envie um follow-up a cada hora quando a cliente responde e
-  // some novamente várias vezes no mesmo dia. Máximo: 1 ciclo de follow-up por sessão a cada 24h.
-  const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-  const { error } = await supabase
-    .from('chat_control')
-    .update({
-      followup_sent_at: null,
-      followup_closed_at: null,
-      followup_context: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('session_id', sessionId)
-    .not('followup_sent_at', 'is', null)   // só atualiza se havia follow-up pendente
-    .lt('followup_sent_at', cutoff24h);    // e só se o envio foi há mais de 24h (cooldown)
-  if (error) {
-    logger.debug({ err: error.message, session_id: sessionId }, 'resetFollowupState noop ou erro');
-  } else {
-    logger.debug({ session_id: sessionId }, 'ciclo de follow-up resetado (nova mensagem da cliente, cooldown 24h expirado)');
   }
 }
 

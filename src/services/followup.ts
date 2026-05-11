@@ -139,6 +139,11 @@ function buildClosingMessage(context: FollowupContext): string[] {
 // ─── Executa o sweep de follow-ups ───────────────────────────────────────────
 
 async function sweepFollowups(): Promise<void> {
+  // KILL-SWITCH: follow-up sweeper desabilitado após incidente de disparo em massa.
+  // NÃO REMOVER sem antes investigar e validar com cliente.
+  logger.warn('sweepFollowups DESABILITADO — kill-switch ativo');
+  return;
+
   if (!env.EVOLUTION_INSTANCE) return;
 
   const cutoff = new Date(Date.now() - FOLLOWUP_AFTER_MS).toISOString();
@@ -273,6 +278,11 @@ async function sweepFollowups(): Promise<void> {
 // ─── Sweep de encerramento (30 min após follow-up sem resposta) ───────────────
 
 async function sweepCloseSessions(): Promise<void> {
+  // KILL-SWITCH: close sweeper desabilitado após incidente de disparo em massa.
+  // NÃO REMOVER sem antes investigar e validar com cliente.
+  logger.warn('sweepCloseSessions DESABILITADO — kill-switch ativo');
+  return;
+
   if (!env.EVOLUTION_INSTANCE) return;
 
   const cutoff = new Date(Date.now() - CLOSE_AFTER_FOLLOWUP_MS).toISOString();

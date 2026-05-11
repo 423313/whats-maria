@@ -139,11 +139,6 @@ function buildClosingMessage(context: FollowupContext): string[] {
 // ─── Executa o sweep de follow-ups ───────────────────────────────────────────
 
 async function sweepFollowups(): Promise<void> {
-  // KILL-SWITCH: follow-up sweeper desabilitado após incidente de disparo em massa.
-  // NÃO REMOVER sem antes investigar e validar com cliente.
-  logger.warn('sweepFollowups DESABILITADO — kill-switch ativo');
-  return;
-
   if (!env.EVOLUTION_INSTANCE) return;
 
   const cutoff = new Date(Date.now() - FOLLOWUP_AFTER_MS).toISOString();
@@ -186,13 +181,22 @@ async function sweepFollowups(): Promise<void> {
     // Verifica se já enviou follow-up ou se está pausada
     const { data: control } = await supabase
       .from('chat_control')
-      .select('ai_paused, followup_sent_at, instance, mariana_last_manual_at, skip_followup')
+      .select('ai_paused, followup_sent_at, followup_closed_at, instance, mariana_last_manual_at, skip_followup')
       .eq('session_id', sessionId)
       .maybeSingle();
 
     if (control?.ai_paused) continue;         // humano no controle, não interferir
-    if (control?.followup_sent_at) continue;  // já enviou follow-up nessa sessão
     if (control?.skip_followup) continue;     // cliente marcou pra não ter follow-up
+
+    // Guarda 1: já enviou follow-up nessa sessão (e cooldown de 24h não expirou)
+    if (control?.followup_sent_at) continue;
+
+    // Guarda 2: sessão já foi encerrada formalmente hoje (mensagem de encerramento enviada)
+    // Mesmo que followup_sent_at tenha sido zerado por algum motivo, não reenviar
+    if (control?.followup_closed_at) {
+      const closedElapsed = Date.now() - new Date(control.followup_closed_at).getTime();
+      if (closedElapsed < 24 * 60 * 60 * 1000) continue; // encerrado há menos de 24h
+    }
 
     // Janela de 24h: Mariana enviou mensagem manual recentemente
     if (control?.mariana_last_manual_at) {
@@ -278,11 +282,6 @@ async function sweepFollowups(): Promise<void> {
 // ─── Sweep de encerramento (30 min após follow-up sem resposta) ───────────────
 
 async function sweepCloseSessions(): Promise<void> {
-  // KILL-SWITCH: close sweeper desabilitado após incidente de disparo em massa.
-  // NÃO REMOVER sem antes investigar e validar com cliente.
-  logger.warn('sweepCloseSessions DESABILITADO — kill-switch ativo');
-  return;
-
   if (!env.EVOLUTION_INSTANCE) return;
 
   const cutoff = new Date(Date.now() - CLOSE_AFTER_FOLLOWUP_MS).toISOString();

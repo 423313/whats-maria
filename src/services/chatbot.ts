@@ -782,6 +782,7 @@ async function ensureChatControl(
 // fora deste módulo (follow-ups, mensagens auto pós-decisão de pendência).
 
 // Fallback via DB: detecta eco quando o messageId não está disponível no registry
+// Busca TANTO 'pending' QUANTO 'sent' porque o status pode mudar entre envio e webhook
 async function hasRecentPendingFloraReply(sessionId: string): Promise<boolean> {
   const cutoff = new Date(Date.now() - PENDING_ECHO_WINDOW_MS).toISOString();
   const { data, error } = await supabase
@@ -789,8 +790,7 @@ async function hasRecentPendingFloraReply(sessionId: string): Promise<boolean> {
     .select('id')
     .eq('session_id', sessionId)
     .eq('role', 'assistant')
-    .eq('status', 'pending')
-    .is('evolution_message_id', null)
+    .in('status', ['pending', 'sent'])
     .gte('created_at', cutoff)
     .limit(1)
     .maybeSingle();

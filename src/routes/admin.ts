@@ -322,6 +322,50 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send(data ?? []);
   });
 
+  // Aprova e aplica a sugestão de prompt de uma revisão semanal
+  app.post('/admin/reviews/:id/approve', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+    const { id } = req.params as { id: string };
+
+    const { data: review, error: fetchErr } = await supabase
+      .from('weekly_reviews')
+      .select('prompt_suggestion, prompt_approved_at, week_start')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !review) return reply.status(404).send({ error: 'Revisão não encontrada' });
+    if (!review.prompt_suggestion) return reply.status(400).send({ error: 'Essa revisão não tem sugestão de prompt' });
+    if (review.prompt_approved_at) return reply.status(409).send({ error: 'Sugestão já foi aprovada anteriormente' });
+
+    const { data: config } = await supabase
+      .from('agent_configs')
+      .select('system_prompt')
+      .eq('agent_type', 'default')
+      .single();
+
+    if (!config) return reply.status(500).send({ error: 'agent_config não encontrado' });
+
+    const newPrompt =
+      config.system_prompt.trimEnd() +
+      '\n\n# Ajustes da revisão de ' + review.week_start + '\n' +
+      review.prompt_suggestion;
+
+    const { error: updateErr } = await supabase
+      .from('agent_configs')
+      .update({ system_prompt: newPrompt, updated_at: new Date().toISOString() })
+      .eq('agent_type', 'default');
+
+    if (updateErr) return reply.status(500).send({ error: updateErr.message });
+
+    await supabase
+      .from('weekly_reviews')
+      .update({ prompt_updated: true, prompt_approved_at: new Date().toISOString(), prompt_approved_by: 'admin' })
+      .eq('id', id);
+
+    logger.info({ review_id: id, week_start: review.week_start }, 'weekly-review: sugestão de prompt aprovada e aplicada');
+    return reply.send({ ok: true });
+  });
+
   // Dispara revisão manual
   app.post('/admin/reviews/run', async (req, reply) => {
     if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });

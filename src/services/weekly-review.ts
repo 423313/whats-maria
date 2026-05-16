@@ -214,35 +214,21 @@ async function runWeeklyReview(): Promise<void> {
   // Analisa com GPT-4
   const result = await analyzeConversations(conversations, config.system_prompt, openaiKey);
 
-  // Aplica melhorias ao prompt se houver
-  let promptUpdated = false;
-  if (result.prompt_addition?.trim()) {
-    const newPrompt = config.system_prompt.trimEnd() +
-      '\n\n# Ajustes automáticos — revisão de ' + weekStartStr + '\n' +
-      result.prompt_addition.trim();
-
-    const { error: updateError } = await supabase
-      .from('agent_configs')
-      .update({ system_prompt: newPrompt, updated_at: new Date().toISOString() })
-      .eq('agent_type', 'default');
-
-    if (!updateError) {
-      promptUpdated = true;
-      logger.info({ week_start: weekStartStr }, 'weekly-review: prompt atualizado automaticamente');
-    } else {
-      logger.warn({ err: updateError.message }, 'weekly-review: erro ao atualizar prompt');
-    }
+  // Salva o resultado da revisão — sugestão de prompt fica pendente de aprovação manual
+  const promptSuggestion = result.prompt_addition?.trim() || null;
+  if (promptSuggestion) {
+    logger.info({ week_start: weekStartStr }, 'weekly-review: sugestão de prompt salva — aguardando aprovação no painel');
   }
 
-  // Salva o resultado da revisão
   await supabase.from('weekly_reviews').insert({
     week_start: weekStartStr,
     sessions_count: sessionsCount,
     messages_count: messagesCount,
     issues_found: result.issues,
     improvements: result.improvements,
-    prompt_updated: promptUpdated,
+    prompt_updated: false,
     summary: result.summary,
+    prompt_suggestion: promptSuggestion,
   });
 
   // Envia notificação WhatsApp se configurado
@@ -265,7 +251,7 @@ async function runWeeklyReview(): Promise<void> {
     sessions: sessionsCount,
     messages: messagesCount,
     issues: result.issues.length,
-    prompt_updated: promptUpdated,
+    prompt_suggestion: !!promptSuggestion,
   }, 'weekly-review: revisão concluída');
 }
 

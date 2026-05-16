@@ -4,9 +4,10 @@ import { env } from '../config/env.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 import { registerFloraEcho } from '../lib/echo-registry.js';
 
-const FOLLOWUP_AFTER_MS = 60 * 60 * 1000;       // 60 minutos sem resposta → follow-up
-const CLOSE_AFTER_FOLLOWUP_MS = 30 * 60 * 1000; // 30 min após follow-up sem resposta → encerramento
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;         // checar a cada 5 minutos
+const FOLLOWUP_AFTER_MS = 60 * 60 * 1000;           // 60 minutos sem resposta → follow-up (desabilitado)
+const CLOSE_AFTER_FOLLOWUP_MS = 30 * 60 * 1000;    // 30 min após follow-up sem resposta → encerramento
+const CLOSE_AFTER_INACTIVITY_MS = 180 * 60 * 1000; // 180 min sem resposta → encerramento silencioso
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;            // checar a cada 5 minutos
 const MIN_MESSAGES_FOR_FOLLOWUP = 4;             // mínimo de mensagens na conversa pra ter follow-up
 
 let sweeperHandle: NodeJS.Timeout | null = null;
@@ -382,16 +383,78 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+// ─── Sweep de inatividade (180 min sem resposta → encerramento silencioso) ────
+
+async function sweepInactiveSessions(): Promise<void> {
+  const cutoff = new Date(Date.now() - CLOSE_AFTER_INACTIVITY_MS).toISOString();
+  const maxAgeWindow = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  const { data: sessions, error } = await supabase
+    .from('chat_messages')
+    .select('session_id, role, created_at')
+    .gte('created_at', maxAgeWindow)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    logger.warn({ err: error.message }, 'inactivity-sweep: falha ao buscar sessões');
+    return;
+  }
+
+  // Última mensagem por sessão
+  const latestMap = new Map<string, { role: string; created_at: string }>();
+  for (const row of sessions ?? []) {
+    if (!latestMap.has(row.session_id)) {
+      latestMap.set(row.session_id, { role: row.role, created_at: row.created_at });
+    }
+  }
+
+  for (const [sessionId, latest] of latestMap) {
+    // Só encerra se a última mensagem foi da Flora e passaram 180 min
+    if (latest.role !== 'assistant') continue;
+    if (latest.created_at > cutoff) continue;
+
+    const { data: control } = await supabase
+      .from('chat_control')
+      .select('ai_paused, followup_closed_at, mariana_last_manual_at, instance')
+      .eq('session_id', sessionId)
+      .maybeSingle();
+
+    if (control?.ai_paused) continue;
+
+    // Já foi encerrada nas últimas 24h
+    if (control?.followup_closed_at) {
+      const elapsed = Date.now() - new Date(control.followup_closed_at).getTime();
+      if (elapsed < 24 * 60 * 60 * 1000) continue;
+    }
+
+    // Mariana assumiu recentemente — não interferir
+    if (control?.mariana_last_manual_at) {
+      const elapsed = Date.now() - new Date(control.mariana_last_manual_at).getTime();
+      if (elapsed < 24 * 60 * 60 * 1000) continue;
+    }
+
+    // Marca encerramento silencioso (sem enviar mensagem)
+    await supabase
+      .from('chat_control')
+      .upsert({
+        session_id: sessionId,
+        instance: control?.instance ?? env.EVOLUTION_INSTANCE,
+        followup_closed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'session_id' });
+
+    logger.info({ session_id: sessionId }, 'sessão encerrada silenciosamente por inatividade (180 min)');
+  }
+}
+
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
 
 export function startFollowupSweeper(): void {
   if (sweeperHandle) return;
   sweeperHandle = setInterval(() => {
-    sweepFollowups().catch((err) => {
-      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'followup sweeper erro');
-    });
-    sweepCloseSessions().catch((err) => {
-      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'close sweeper erro');
+    // follow-up de 60 min desabilitado — se cliente não responder, tudo bem
+    sweepInactiveSessions().catch((err) => {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'inactivity sweeper erro');
     });
   }, CHECK_INTERVAL_MS);
 

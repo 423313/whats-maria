@@ -741,6 +741,21 @@
           <div style="font-size:12px; color:#888; font-style:italic;">"${escapeHtml(i.mensagem_problema || '')}"</div>
           <div style="font-size:12px; color:#22c55e; margin-top:4px;">✓ ${escapeHtml(i.sugestao || '')}</div>
         </div>`).join('');
+      const suggestionHtml = r.prompt_suggestion
+        ? r.prompt_approved_at
+          ? `<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:14px 16px; margin-top:16px;">
+               <div style="font-size:12px; font-weight:700; color:#15803d; margin-bottom:6px;">✓ Sugestão de prompt aplicada em ${new Date(r.prompt_approved_at).toLocaleDateString('pt-BR')}</div>
+               <pre style="font-size:12px; color:#444; white-space:pre-wrap; font-family:monospace; line-height:1.5;">${escapeHtml(r.prompt_suggestion)}</pre>
+             </div>`
+          : `<div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:14px 16px; margin-top:16px;">
+               <div style="font-size:12px; font-weight:700; color:#92400e; margin-bottom:8px;">💡 Sugestão de melhoria no prompt (aguardando aprovação)</div>
+               <pre style="font-size:12px; color:#444; white-space:pre-wrap; font-family:monospace; line-height:1.5; margin-bottom:12px;">${escapeHtml(r.prompt_suggestion)}</pre>
+               <button onclick="approvePromptSuggestion('${r.id}')" style="background:#8b1a2e; color:#fff; border:none; padding:8px 20px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">
+                 Aplicar ao prompt da Flora
+               </button>
+             </div>`
+        : '';
+
       return `
         <div style="background:#fff; border-radius:12px; padding:24px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.06);">
           <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
@@ -751,8 +766,21 @@
           <div style="font-size:13px; color:#555; margin-bottom:16px; line-height:1.6;">${escapeHtml(r.summary || 'Sem resumo disponível.')}</div>
           <div style="font-size:12px; color:#aaa; margin-bottom:12px;">${r.sessions_count} conversa(s) · ${r.messages_count} mensagem(ns)</div>
           ${issuesHtml || '<p style="font-size:13px; color:#22c55e;">Nenhum problema encontrado nesta semana.</p>'}
+          ${suggestionHtml}
         </div>`;
     }).join('');
+  }
+
+  async function approvePromptSuggestion(reviewId) {
+    if (!confirm('Aplicar essa sugestão ao prompt da Flora? A alteração entra em vigor em até 30 segundos.')) return;
+    const res = await fetch(`/admin/reviews/${reviewId}/approve`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (!res.ok) { alert('Erro: ' + (data.error || 'falha desconhecida')); return; }
+    alert('Sugestão aplicada com sucesso! O prompt da Flora foi atualizado.');
+    loadReviews();
   }
 
   async function runManualReview() {

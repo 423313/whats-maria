@@ -1,29 +1,14 @@
 /**
- * Libera a sessão de teste do Pedro (41999595242) no chat_control:
+ * Libera a sessao de teste do Pedro (41999595242) no chat_control:
  *  - remove a janela manual da Mariana (mariana_last_manual_at = null)
  *  - despausa AI (ai_paused = false)
  *
- * Uso: node supabase/unlock-test-session.mjs
+ * Uso: node scripts/supabase/unlock-test-session.mjs
  */
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseClient } from '../_lib/env.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const envText = readFileSync(resolve(__dirname, '..', '.env'), 'utf8');
-const env = {};
-for (const line of envText.split('\n')) {
-  const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-  if (m) env[m[1]] = m[2].replace(/^['"]|['"]$/g, '').trim();
-}
-
-const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const supabase = createSupabaseClient();
 
 const phoneFragment = '99595242';
 
@@ -38,13 +23,13 @@ if (errBefore) {
   process.exit(1);
 }
 
-console.log(`Sessões encontradas com '${phoneFragment}':`);
+console.log(`Sessoes encontradas com '${phoneFragment}':`);
 for (const row of before ?? []) {
   console.log(' ', row);
 }
 
 if (!before || before.length === 0) {
-  console.log('Nenhuma sessão encontrada — nada a fazer.');
+  console.log('Nenhuma sessao encontrada - nada a fazer.');
   process.exit(0);
 }
 
@@ -63,7 +48,7 @@ if (errUpd) {
   process.exit(1);
 }
 
-console.log('\n✅ Sessões liberadas:');
+console.log('Sessoes liberadas:');
 for (const row of after ?? []) {
   console.log(' ', row);
 }

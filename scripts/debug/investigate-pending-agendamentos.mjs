@@ -2,13 +2,9 @@
 /**
  * Investiga por que agendamentos pendentes não foram notificados
  */
-import { createClient } from '@supabase/supabase-js';
+import { createSupabaseClient } from '../_lib/env.mjs';
 
-const supabase = createClient(
-  'https://jnfeerxcxxmgjutkfzig.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuZmVlcnhjeHhtZ2p1dGtmemlnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwMjA3NiwiZXhwIjoyMDkzNjc4MDc2fQ.v3S3v8XR4kjyup1gSHRYU_jEnHFhCykeuXE6hr1npD8',
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+const supabase = createSupabaseClient();
 
 async function main() {
   console.log('🔎 INVESTIGANDO AGENDAMENTOS PENDENTES\n');

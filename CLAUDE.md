@@ -235,11 +235,15 @@ O `belasis-sync` é um serviço separado (pasta `belasis-sync/`) que sincroniza 
 `weekly-review.ts` roda toda segunda-feira às 08h BRT:
 1. Busca todas as mensagens da semana anterior
 2. Analisa com GPT-4.1-mini buscando problemas e oportunidades
-3. Se encontrar melhorias, atualiza o `system_prompt` automaticamente (adiciona seção ao final)
-4. Salva resultado em `weekly_reviews`
+3. Salva resultado em `weekly_reviews` — incluindo `prompt_suggestion` se o GPT gerou sugestão
+4. **NÃO aplica o prompt automaticamente** — sugestão fica pendente de aprovação manual no painel
 5. Envia relatório via WhatsApp para `REVIEW_NOTIFY_PHONE` (se configurado)
 
+Aprovação no painel: aba "Revisões Semanais" mostra bloco amarelo com a sugestão e botão "Aplicar ao prompt da Flora". Ao aprovar, chama `POST /admin/reviews/:id/approve`, que aplica o texto ao final do `system_prompt` e marca `prompt_approved_at`.
+
 Pode ser disparado manualmente: `POST /admin/reviews/run`
+
+Colunas adicionadas em `weekly_reviews`: `prompt_suggestion` (text), `prompt_approved_at` (timestamptz), `prompt_approved_by` (text).
 
 ---
 
@@ -264,6 +268,7 @@ Endpoints relevantes:
 - `GET /admin/availability` — bloco de disponibilidade atual injetado no prompt (debug)
 - `GET /admin/reviews` — revisões semanais
 - `POST /admin/reviews/run` — dispara revisão manual
+- `POST /admin/reviews/:id/approve` — aprova e aplica sugestão de prompt ao agent_configs
 
 ---
 

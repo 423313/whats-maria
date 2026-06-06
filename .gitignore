@@ -11,3 +11,4 @@ coverage/
 .claude/
 .swarm/
 .claude-flow/
+ruflo-backup-*/

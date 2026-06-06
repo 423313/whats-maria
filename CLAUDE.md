@@ -41,34 +41,47 @@ Agente de IA chamado **Flora** que atende clientes no WhatsApp do **Studio Maria
 src/
 ├── config/env.ts                  # Zod — valida e exporta env vars
 ├── lib/
+│   ├── auth-utils.ts              # Comparação de senha em tempo constante (timingSafeEqual)
 │   ├── echo-registry.ts           # Registry in-memory de IDs enviados pela Flora (evita auto-bloqueio)
 │   ├── evolution.ts               # Cliente HTTP da Evolution API (sendText, sendMedia, findMessages, sendPresence)
-│   ├── logger.ts                  # Pino com redação de secrets
+│   ├── logger.ts                  # Pino com redação de secrets + PII (LGPD)
 │   ├── migrations.ts              # Migrações de banco na inicialização
-│   ├── openai.ts                  # Factory de clientes OpenAI
+│   ├── openai.ts                  # Factory de clientes OpenAI (timeout 30s + retry)
+│   ├── pending-block.ts           # Fonte única do regex de bloco de agendamento/lead
 │   ├── phone.ts                   # Normalização de telefone BR
-│   └── supabase.ts                # Cliente Supabase service-role
+│   ├── studio-schedule.ts         # Fonte única de horários do studio (status + working hours + grade)
+│   ├── supabase.ts                # Cliente Supabase service-role
+│   └── time.ts                    # Helpers de fuso America/Sao_Paulo (Intl, robusto a fuso do servidor)
+├── prompts/                       # Templates de system prompt (produto SaaS multi-tenant)
 ├── routes/
 │   ├── health.ts                  # GET /health e /health/ready
-│   ├── admin.ts                   # Painel admin (prompt, sessões, pendências, métricas, revisões)
+│   ├── admin.ts                   # Painel admin (prompt, sessões, métricas, revisões) — auth fail-closed
 │   └── webhooks/evolution.ts      # POST /webhooks/evolution
 ├── services/
 │   ├── agent.ts                   # Chamada OpenAI com structured output (JSON schema)
 │   ├── agent-config.ts            # Cache 30s da agent_configs do Supabase
-│   ├── buffer.ts                  # Buffer + debounce (15s) + sweeper (20s) de mensagens
+│   ├── buffer.ts                  # Buffer + debounce (15s) + sweeper (20s) + claim atômico
 │   ├── calendar-availability.ts   # Lê Google Calendar e gera bloco de slots livres pro prompt
-│   ├── chatbot.ts                 # Orquestração principal do webhook + flushSession
-│   ├── followup.ts                # Sweeper de follow-up e encerramento automático
+│   ├── chat-repository.ts         # Acesso a dados (chat_messages, chat_control, nome, pausa)
+│   ├── chatbot.ts                 # Orquestrador do webhook + flushSession (handlers de entrada/saída)
+│   ├── followup.ts                # Sweeper de encerramento silencioso por inatividade
+│   ├── human-takeover.ts          # Janela de atendimento manual da Mariana (24h)
 │   ├── mariana-monitor.ts         # Polling (30s) de mensagens manuais da Mariana não entregues via webhook
 │   ├── media.ts                   # Processa áudio (Whisper), imagem (Vision), vídeo/documento
 │   ├── message-parsers.ts         # Parsers de tipos de mensagem WhatsApp (contato, reação, localização, etc.)
+│   ├── message-routing.ts         # Converte payload da mensagem recebida → texto (routeMessage)
+│   ├── pending-actions.ts         # Detecta blocos de agendamento/lead → pending_action + notifica Mariana
 │   └── weekly-review.ts           # Revisão semanal automática com GPT-4 (toda segunda às 08h)
 └── server.ts                      # Bootstrap Fastify + inicializa todos os sweepers
 
 src/admin/index.html               # SPA do painel admin (HTML/JS vanilla)
 
 belasis-sync/                      # Serviço separado (Node.js) que sincroniza agenda do Belasis com Google Calendar
+docs/                              # Documentação (deploy, prompt, fixes, melhorias, saas, reference) — ver docs/README.md
+scripts/                          # Scripts utilitários (debug, maintenance, migrations, notifications, prompt, supabase)
+tests/                            # Testes Vitest (118): time, pending-block, auth-utils, buffer, echo-registry, agent-date, followup
 supabase/
+├── migrations/                    # Migrações incrementais (.sql)
 ├── schema.sql                     # DDL das tabelas
 └── seed.sql                       # INSERT inicial (agent_configs)
 ```
@@ -342,10 +355,10 @@ Healthcheck: `GET /health` retorna `{"status":"ok"}`
 |---|---|---|---|
 | Domingo | Fechado | | |
 | Segunda | Fechado | | |
-| Terça | Aberto | 09h-16h | Mariana (unhas) |
-| Quarta | Aberto | 09h-16h | Mariana (unhas) |
-| Quinta | Aberto | 09h-16h (Mariana) e 13h30-21h (Scarlet) | Mariana + Scarlet (sobrancelhas/cílios) |
-| Sexta | Aberto | 09h-16h | Mariana (unhas) |
+| Terça | Aberto | 09h-16h30 | Mariana (unhas) |
+| Quarta | Aberto | 09h-16h30 | Mariana (unhas) |
+| Quinta | Aberto | 09h-16h30 (Mariana) e 13h30-21h (Scarlet) | Mariana + Scarlet (sobrancelhas/cílios) |
+| Sexta | Aberto | 09h-16h30 | Mariana (unhas) |
 | Sábado | Aberto | 08h-12h (Mariana) e 08h-18h (Scarlet) | Mariana + Scarlet |
 
 Grade oficial de slots oferecidos: ter/qua/qui/sex: 09h, 11h, 13h, 15h | sáb: 08h, 10h

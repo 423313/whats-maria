@@ -28,5 +28,15 @@ export function registerFloraEcho(messageId: string): void {
 export function isFloraEcho(messageId: string | null | undefined): boolean {
   if (!messageId) return false;
   const ts = registry.get(messageId);
-  return ts !== undefined && Date.now() - ts < PENDING_ECHO_WINDOW_MS;
+  if (ts === undefined) return false;
+  const fresh = Date.now() - ts < PENDING_ECHO_WINDOW_MS;
+  // Limpeza lazy: remove entrada expirada na leitura (cobre o caso de a Flora ficar
+  // ociosa e o register — que faz a limpeza proativa — não rodar mais).
+  if (!fresh) registry.delete(messageId);
+  return fresh;
+}
+
+/** Exposto para testes/diagnóstico: nº de entradas vivas no registry. */
+export function echoRegistrySize(): number {
+  return registry.size;
 }

@@ -9,3 +9,5 @@ dist
 coverage/
 .mcp.json
 .claude/
+.swarm/
+.claude-flow/

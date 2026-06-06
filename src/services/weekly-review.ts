@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { getOpenAIClient } from '../lib/openai.js';
 import { resolveOpenAIKey, loadAgentConfig } from './agent-config.js';
 import { getEvolutionClient } from '../lib/evolution.js';
+import { saoPauloParts, subtractDays, saoPauloDateStartToUtcIso } from '../lib/time.js';
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000; // checa a cada 30 minutos
 let sweeperHandle: NodeJS.Timeout | null = null;
@@ -94,7 +95,24 @@ Responda APENAS com um JSON válido neste formato exato:
   });
 
   const content = response.choices[0]?.message?.content ?? '{}';
-  const parsed = JSON.parse(content) as ReviewResult;
+  let parsed: Partial<ReviewResult>;
+  try {
+    parsed = JSON.parse(content) as ReviewResult;
+  } catch (err) {
+    // Diferente do agente principal, aqui usamos json_object (não json_schema estrito),
+    // então o modelo pode devolver JSON truncado/malformado. Não derruba a revisão:
+    // retorna resultado vazio com um summary indicando a falha.
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), content_length: content.length },
+      'weekly-review: JSON.parse da análise falhou',
+    );
+    return {
+      issues: [],
+      improvements: [],
+      summary: 'Falha ao interpretar a resposta da análise automática (JSON inválido). Revisão não concluída nesta execução.',
+      prompt_addition: '',
+    };
+  }
   return {
     issues: parsed.issues ?? [],
     improvements: parsed.improvements ?? [],
@@ -148,14 +166,12 @@ function buildWhatsAppReport(
 async function runWeeklyReview(): Promise<void> {
   logger.info('weekly-review: iniciando revisão semanal');
 
-  // Calcula início da semana (segunda passada)
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0=dom, 1=seg...
-  const daysBack = dayOfWeek === 0 ? 7 : dayOfWeek;
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - daysBack);
-  weekStart.setHours(0, 0, 0, 0);
-  const weekStartStr = weekStart.toISOString().split('T')[0]!;
+  // Calcula início da semana (segunda) no fuso de São Paulo, robusto a fuso do servidor
+  const sp = saoPauloParts();
+  const daysBack = sp.weekday === 0 ? 7 : sp.weekday;
+  const weekStartStr = subtractDays(sp.dateStr, daysBack);
+  // Instante UTC equivalente à meia-noite de SP, para filtrar created_at
+  const weekStartIso = saoPauloDateStartToUtcIso(weekStartStr);
 
   // Verifica se já rodou essa semana
   const { data: existing } = await supabase
@@ -173,7 +189,7 @@ async function runWeeklyReview(): Promise<void> {
   const { data: messages, error: msgError } = await supabase
     .from('chat_messages')
     .select('session_id, role, content, created_at')
-    .gte('created_at', weekStart.toISOString())
+    .gte('created_at', weekStartIso)
     .in('role', ['user', 'assistant'])
     .order('session_id')
     .order('created_at', { ascending: true });
@@ -262,12 +278,9 @@ function delay(ms: number) {
 // ─── Verifica se deve rodar (segunda-feira entre 08h e 09h) ──────────────────
 
 function shouldRunToday(): boolean {
-  const now = new Date();
-  // Converte para horário de Brasília (UTC-3)
-  const brasiliaOffset = -3 * 60;
-  const utcOffset = now.getTimezoneOffset();
-  const brasiliaTime = new Date(now.getTime() + (utcOffset + brasiliaOffset) * 60 * 1000);
-  return brasiliaTime.getDay() === 1 && brasiliaTime.getHours() === 8;
+  // Segunda-feira (weekday 1) entre 08h e 09h no fuso de São Paulo, robusto a fuso do servidor
+  const sp = saoPauloParts(new Date());
+  return sp.weekday === 1 && sp.hour === 8;
 }
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────

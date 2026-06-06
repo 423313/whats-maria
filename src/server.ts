@@ -22,7 +22,10 @@ async function main() {
   const app = Fastify({
     loggerInstance: logger,
     trustProxy: true,
-    disableRequestLogging: false,
+    // Desligado: o log automático de request inclui a URL, que em rotas admin
+    // carrega o telefone do cliente (ex: /admin/sessions/5541...@s.whatsapp.net/messages).
+    // PII em logs viola LGPD. Logs de negócio relevantes são emitidos manualmente.
+    disableRequestLogging: true,
     requestIdHeader: 'x-request-id',
     bodyLimit: 5 * 1024 * 1024,
   });

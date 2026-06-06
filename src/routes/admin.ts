@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { safeEqual } from '../lib/auth-utils.js';
 import { supabase } from '../lib/supabase.js';
 import { env } from '../config/env.js';
 import { readFileSync } from 'fs';
@@ -33,10 +34,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 function checkAuth(req: { headers: Record<string, string | string[] | undefined> }): boolean {
-  if (!env.ADMIN_PASSWORD) return true; // sem senha configurada = aberto (não recomendado)
+  // FAIL-CLOSED: sem senha configurada = acesso negado (nunca abrir o painel por omissão).
+  if (!env.ADMIN_PASSWORD) {
+    logger.error('checkAuth: ADMIN_PASSWORD não configurada — negando acesso ao painel');
+    return false;
+  }
   const auth = req.headers['authorization'] ?? '';
   const token = Array.isArray(auth) ? auth[0] : auth;
-  return token === `Bearer ${env.ADMIN_PASSWORD}`;
+  if (!token) return false;
+  return safeEqual(token, `Bearer ${env.ADMIN_PASSWORD}`);
 }
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -60,7 +66,12 @@ export async function adminRoutes(app: FastifyInstance) {
   // Login — valida senha
   app.post('/admin/login', async (req, reply) => {
     const { password } = req.body as { password?: string };
-    if (!env.ADMIN_PASSWORD || password === env.ADMIN_PASSWORD) {
+    // FAIL-CLOSED: sem senha configurada, ninguém entra.
+    if (!env.ADMIN_PASSWORD) {
+      logger.error('admin/login: ADMIN_PASSWORD não configurada — negando login');
+      return reply.status(503).send({ ok: false, error: 'Painel indisponível: senha não configurada' });
+    }
+    if (password && safeEqual(password, env.ADMIN_PASSWORD)) {
       return reply.send({ ok: true });
     }
     return reply.status(401).send({ ok: false, error: 'Senha incorreta' });

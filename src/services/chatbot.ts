@@ -7,9 +7,7 @@ import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-con
 import { runAgent } from './agent.js';
 import {
   addToBuffer,
-  cancelPendingFlush,
   claimPendingBuffer,
-  discardPendingBuffer,
   markBufferProcessed,
   peekPendingBuffer,
   registerFlushHandler,
@@ -17,6 +15,7 @@ import {
 import { resetFollowupState } from './followup.js';
 import { pendingBlockRemovalRegex } from '../lib/pending-block.js';
 import { handlePendingActions } from './pending-actions.js';
+import { updateMarianaManualAt, isWithinMarianaManualWindow } from './human-takeover.js';
 import {
   type PersistMessageInput,
   persistIncomingMessage,
@@ -681,37 +680,6 @@ function getDocumentSize(message: Record<string, unknown>): number | null {
     if (typeof low === 'number') return low;
   }
   return null;
-}
-
-async function updateMarianaManualAt(sessionId: string): Promise<void> {
-  const now = new Date().toISOString();
-  const { error } = await supabase
-    .from('chat_control')
-    .update({ mariana_last_manual_at: now, updated_at: now })
-    .eq('session_id', sessionId);
-  if (error) {
-    logger.warn({ err: error.message, session_id: sessionId }, 'updateMarianaManualAt failed');
-    return;
-  }
-  logger.info({ session_id: sessionId }, 'janela manual Mariana iniciada (24h)');
-
-  // Descarta imediatamente qualquer mensagem pendente no buffer para evitar que
-  // a Flora responda depois que a janela de 24h expirar com contexto desatualizado.
-  // Também cancela o timer de debounce para que não tente disparar um flush em vão.
-  cancelPendingFlush(sessionId);
-  await discardPendingBuffer(sessionId);
-}
-
-const MARIANA_MANUAL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 horas
-
-async function isWithinMarianaManualWindow(sessionId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('chat_control')
-    .select('mariana_last_manual_at')
-    .eq('session_id', sessionId)
-    .maybeSingle();
-  if (error || !data?.mariana_last_manual_at) return false;
-  return Date.now() - new Date(data.mariana_last_manual_at).getTime() < MARIANA_MANUAL_WINDOW_MS;
 }
 
 async function resolveAgentType(sessionId: string): Promise<string> {

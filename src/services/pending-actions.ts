@@ -1,0 +1,251 @@
+/**
+ * Detecção e notificação de pendências (agendamentos / leads de curso) — extraído
+ * de chatbot.ts. Recebe o texto final da resposta da Flora, detecta os blocos
+ * estruturados, cria a pending_action e notifica a Mariana via WhatsApp.
+ */
+
+import { supabase } from '../lib/supabase.js';
+import { logger } from '../lib/logger.js';
+import { env } from '../config/env.js';
+import { getEvolutionClient } from '../lib/evolution.js';
+import { buildPendingBlockRegex } from '../lib/pending-block.js';
+import { checkConsecutiveSlotsFree } from './calendar-availability.js';
+import { saveClientName } from './chat-repository.js';
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function serviceToMinSlots(service: string): number {
+  if (/alongamento|encapsulada|spá|spa/i.test(service)) return 3; // 90 min
+  return 2; // 60 min — cobre manutenção, blindagem, esmaltação em gel
+}
+
+function parseFields(block: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const line of block.split('\n')) {
+    const sep = line.indexOf(':');
+    if (sep === -1) continue;
+    const key = line.slice(0, sep).trim().toLowerCase().replace(/\s+/g, '_');
+    const val = line.slice(sep + 1).trim();
+    if (key && val) fields[key] = val;
+  }
+  return fields;
+}
+
+function extractClientName(fields: Record<string, string>): string {
+  return fields['nome_da_cliente'] ?? fields['nome'] ?? '';
+}
+
+export async function handlePendingActions(
+  sessionId: string,
+  allText: string,
+): Promise<void> {
+  const phone = sessionId.replace('@s.whatsapp.net', '');
+
+  // Mesmo padrão da remoção em flushSession (fonte única — buildPendingBlockRegex)
+  const agendamentoMatch = allText.match(buildPendingBlockRegex('SOLICITAÇÃO DE AGENDAMENTO', 'i'));
+  const cursoMatch = allText.match(buildPendingBlockRegex('LEAD DE CURSO', 'i'));
+
+  const match = agendamentoMatch ?? cursoMatch;
+  if (!match) return;
+
+  const type: 'agendamento' | 'curso' = agendamentoMatch ? 'agendamento' : 'curso';
+  const rawBlock = match[0]!;
+  const fields = parseFields(match[1]!);
+  const clientName = extractClientName(fields);
+
+  // Persiste o nome explícito (prioridade máxima — sobrescreve pushName)
+  if (clientName) {
+    void saveClientName(sessionId, clientName);
+  }
+
+  // Salva no banco (ignora duplicata para a mesma sessão+tipo no mesmo dia)
+  const today = new Date().toISOString().split('T')[0];
+  const { data: existing } = await supabase
+    .from('pending_actions')
+    .select('id')
+    .eq('session_id', sessionId)
+    .eq('type', type)
+    .gte('created_at', `${today}T00:00:00Z`)
+    .maybeSingle();
+
+  if (!existing) {
+    await supabase.from('pending_actions').insert({
+      session_id: sessionId,
+      type,
+      client_name: clientName || null,
+      client_phone: phone,
+      summary: rawBlock.trim(),
+      fields,
+      status: 'pendente',
+    });
+  }
+
+  // Valida janela de disponibilidade para agendamentos
+  let slotWarning: string | null = null;
+  if (type === 'agendamento') {
+    const dataHorario = fields['data_e_horário_solicitados'] ?? '';
+    const timeMatch = dataHorario.match(/(\d{2}:\d{2})/);
+    const dateMatch = dataHorario.match(/\((\d{2}\/\d{2})\)/);
+    const service = fields['procedimento'] ?? '';
+    if (timeMatch?.[1] && dateMatch?.[1]) {
+      const currentYear = new Date().getFullYear();
+      const minSlots = serviceToMinSlots(service);
+      try {
+        const { valid, freeSlots } = await checkConsecutiveSlotsFree(
+          dateMatch[1], timeMatch[1], minSlots, currentYear,
+        );
+        if (!valid) {
+          slotWarning =
+            `⚠️ AVISO: slot ${timeMatch[1]} tem apenas ${freeSlots * 30} min livre` +
+            ` (serviço precisa de ~${minSlots * 30} min). Confirme a agenda antes de responder à cliente.`;
+          logger.warn(
+            { session_id: sessionId, slot: timeMatch[1], freeSlots, minSlots, service },
+            'slot validation: janela insuficiente detectada',
+          );
+        }
+      } catch (err) {
+        logger.debug({ err: err instanceof Error ? err.message : String(err) }, 'slot validation error — ignorado');
+      }
+    }
+  }
+
+  // Notifica Mariana via WhatsApp
+  if (!env.MARIANA_NOTIFY_PHONE) {
+    logger.warn(
+      { session_id: sessionId, type },
+      'MARIANA_NOTIFY_PHONE não configurada — notificação não será enviada',
+    );
+    return;
+  }
+
+  if (!env.EVOLUTION_INSTANCE) {
+    logger.warn(
+      { session_id: sessionId, type },
+      'EVOLUTION_INSTANCE não configurada — notificação não será enviada',
+    );
+    return;
+  }
+
+  try {
+    const evolution = getEvolutionClient();
+    const emoji = type === 'agendamento' ? '📅' : '🎓';
+    const label = type === 'agendamento' ? 'Agendamento' : 'Lead de curso';
+    const lines: string[] = [];
+    if (slotWarning) lines.push(slotWarning);
+    lines.push(`${emoji} Nova solicitação — ${label}`);
+    lines.push(clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`);
+
+    if (type === 'agendamento') {
+      if (fields['procedimento']) lines.push(`Serviço: ${fields['procedimento']}`);
+      if (fields['data_e_horário_solicitados']) lines.push(`Data: ${fields['data_e_horário_solicitados']}`);
+      if (fields['valor']) lines.push(`Valor: ${fields['valor']}`);
+      if (fields['cliente']) lines.push(`Cliente: ${fields['cliente']}`);
+    } else {
+      if (fields['formato_preferido']) lines.push(`Formato: ${fields['formato_preferido']}`);
+      if (fields['data_preferida']) lines.push(`Data preferida: ${fields['data_preferida']}`);
+      if (fields['experiência']) lines.push(`Experiência: ${fields['experiência']}`);
+    }
+
+    lines.push(`WhatsApp: ${phone}`);
+
+    logger.info(
+      { session_id: sessionId, type, to: env.MARIANA_NOTIFY_PHONE, lineCount: lines.length },
+      'enviando notificação para Mariana',
+    );
+
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) await delay(800);
+      await evolution.sendText(env.EVOLUTION_INSTANCE, env.MARIANA_NOTIFY_PHONE, lines[i]!);
+    }
+
+    logger.info(
+      { session_id: sessionId, type },
+      'notificação enviada com sucesso para Mariana',
+    );
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), session_id: sessionId, type },
+      'notificação para Mariana falhou — verificar MARIANA_NOTIFY_PHONE e EVOLUTION_INSTANCE',
+    );
+  }
+}
+
+/**
+ * Notifica Mariana de uma escalação genérica (médico, cancelar, dúvida etc).
+ * Chamado quando Flora emite o token [ESCALAR_MARIANA:motivo].
+ *
+ * ATENÇÃO: atualmente DESABILITADO (a chamada em flushSession está comentada).
+ * Mantido aqui caso a escalação volte. Faz dedup leve de 30 min por sessão+motivo.
+ */
+const recentEscalations = new Map<string, number>();
+const ESCALATION_DEDUP_WINDOW_MS = 30 * 60 * 1000;
+
+const ESCALATION_LABELS: Record<string, { emoji: string; label: string }> = {
+  medico: { emoji: '🚨', label: 'Caso médico/sensível' },
+  cancelar: { emoji: '⚠️', label: 'Pedido de cancelamento' },
+  remarcar: { emoji: '⚠️', label: 'Pedido de remarcação' },
+  reembolso: { emoji: '⚠️', label: 'Pedido de reembolso' },
+  reclamacao: { emoji: '⚠️', label: 'Reclamação' },
+  duvida: { emoji: '❓', label: 'Dúvida não respondida' },
+  operacional: { emoji: '❓', label: 'Dúvida operacional' },
+  outro: { emoji: 'ℹ️', label: 'Encaminhamento' },
+};
+
+export async function notifyMarianaEscalation(
+  sessionId: string,
+  motivo: string,
+  contextText: string,
+): Promise<void> {
+  if (!env.MARIANA_NOTIFY_PHONE || !env.EVOLUTION_INSTANCE) return;
+
+  const dedupKey = `${sessionId}::${motivo}`;
+  const now = Date.now();
+  const last = recentEscalations.get(dedupKey);
+  if (last && now - last < ESCALATION_DEDUP_WINDOW_MS) {
+    logger.debug({ session_id: sessionId, motivo }, 'escalation dedup — skipped');
+    return;
+  }
+  recentEscalations.set(dedupKey, now);
+
+  const phone = sessionId.replace('@s.whatsapp.net', '');
+  const labels = ESCALATION_LABELS[motivo] ?? ESCALATION_LABELS['outro']!;
+
+  // Tenta pegar nome da cliente
+  let clientName: string | null = null;
+  try {
+    const { data } = await supabase
+      .from('chat_control')
+      .select('client_name')
+      .eq('session_id', sessionId)
+      .maybeSingle();
+    clientName = data?.client_name ?? null;
+  } catch {
+    // ignore
+  }
+
+  const trimmed = contextText.length > 200
+    ? contextText.slice(0, 200).trim() + '…'
+    : contextText.trim();
+
+  const lines = [
+    `${labels.emoji} ${labels.label}`,
+    clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`,
+    trimmed ? `Última msg da Flora: "${trimmed}"` : null,
+    `WhatsApp: ${phone}`,
+  ].filter((l): l is string => Boolean(l));
+
+  try {
+    const evolution = getEvolutionClient();
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) await delay(800);
+      await evolution.sendText(env.EVOLUTION_INSTANCE, env.MARIANA_NOTIFY_PHONE, lines[i]!);
+    }
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), motivo, session_id: sessionId },
+      'notifyMarianaEscalation falhou',
+    );
+  }
+}

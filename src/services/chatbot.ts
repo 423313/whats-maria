@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { phoneToSessionId } from '../lib/phone.js';
 import { supabase } from '../lib/supabase.js';
 import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-config.js';
+import { checkConsecutiveSlotsFree } from './calendar-availability.js';
 import { runAgent } from './agent.js';
 import {
   addToBuffer,
@@ -14,6 +15,7 @@ import {
   registerFlushHandler,
 } from './buffer.js';
 import { resetFollowupState } from './followup.js';
+import { buildPendingBlockRegex, pendingBlockRemovalRegex } from '../lib/pending-block.js';
 import { isProcessableMedia, processMedia, mediaLabel } from './media.js';
 import {
   PENDING_ECHO_WINDOW_MS,
@@ -312,7 +314,12 @@ async function handleOutgoingMessage(
   // existiria e o UPDATE afetaria 0 linhas, deixando a janela inativa.
   await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
   const incomingMessageId = data.key?.id ?? null;
-  const isEchoFromFlora = isFloraEcho(incomingMessageId) || await hasRecentPendingFloraReply(sessionId);
+  // Sinal FORTE: o messageId está no echo-registry → é comprovadamente um envio da
+  // própria Flora. Sinal FRACO (fallback via DB): há resposta pending recente da Flora.
+  // O fallback fraco serve só pra NÃO ativar a janela, mas NÃO é confiável o
+  // suficiente pra "promover" mensagem por conteúdo (ver passo 6).
+  const isEchoById = isFloraEcho(incomingMessageId);
+  const isEchoFromFlora = isEchoById || await hasRecentPendingFloraReply(sessionId);
   if (!isEchoFromFlora) {
     await updateMarianaManualAt(sessionId);
   } else {
@@ -404,19 +411,24 @@ async function handleOutgoingMessage(
   }
 
   // ─── 6. Tenta promover mensagem pending da própria Flora (echo) ──────────────
+  // SÓ promove por conteúdo quando o messageId está no echo-registry (sinal forte).
+  // Sem isso, uma mensagem manual curta da Mariana ("ok!", "sim") que coincida com
+  // uma resposta pending da Flora seria engolida e nunca registrada como manual.
   const pendingCutoff = new Date(Date.now() - 60_000).toISOString();
-  const { data: pendingMatch } = await supabase
-    .from('chat_messages')
-    .select('id')
-    .eq('session_id', sessionId)
-    .eq('role', 'assistant')
-    .eq('status', 'pending')
-    .eq('content', text)
-    .is('evolution_message_id', null)
-    .gte('created_at', pendingCutoff)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: pendingMatch } = isEchoById
+    ? await supabase
+        .from('chat_messages')
+        .select('id')
+        .eq('session_id', sessionId)
+        .eq('role', 'assistant')
+        .eq('status', 'pending')
+        .eq('content', text)
+        .is('evolution_message_id', null)
+        .gte('created_at', pendingCutoff)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
 
   if (pendingMatch) {
     const { error: updateError } = await supabase
@@ -986,9 +998,8 @@ async function flushSession(sessionId: string): Promise<void> {
   const CARDS_TOKEN = '[CARDS_CURSO]';
 
   // Blocos estruturados que devem ser detectados e REMOVIDOS do texto enviado
-  // pra cliente. Eles servem só pra disparar notificação interna pra Mariana.
-  const PENDING_BLOCK_REGEX =
-    /---\s*(SOLICITAÇÃO DE AGENDAMENTO|LEAD DE CURSO)\s*---[\s\S]*?(?:---+|\n\s*$)/gi;
+  // pra cliente. Mesmo padrão usado em handlePendingActions (lib/pending-block).
+  const PENDING_BLOCK_REGEX = pendingBlockRemovalRegex();
 
   // Token simples de escalação (ex: [ESCALAR_MARIANA:medico]).
   const ESCALAR_TOKEN_REGEX = /\[ESCALAR_MARIANA:([a-z_]+)\]/gi;
@@ -1132,6 +1143,11 @@ function delay(ms: number): Promise<void> {
 
 // ─── Detecção e notificação de pendências ─────────────────────────────────────
 
+function serviceToMinSlots(service: string): number {
+  if (/alongamento|encapsulada|spá|spa/i.test(service)) return 3; // 90 min
+  return 2; // 60 min — cobre manutenção, blindagem, esmaltação em gel
+}
+
 function parseFields(block: string): Record<string, string> {
   const fields: Record<string, string> = {};
   for (const line of block.split('\n')) {
@@ -1154,10 +1170,9 @@ async function handlePendingActions(
 ): Promise<void> {
   const phone = sessionId.replace('@s.whatsapp.net', '');
 
-  const agendamentoMatch = allText.match(
-    /---\s*SOLICITAÇÃO DE AGENDAMENTO\s*---([\s\S]*?)---+/,
-  );
-  const cursoMatch = allText.match(/---\s*LEAD DE CURSO\s*---([\s\S]*?)---+/);
+  // Mesmo padrão da remoção em flushSession (fonte única — buildPendingBlockRegex)
+  const agendamentoMatch = allText.match(buildPendingBlockRegex('SOLICITAÇÃO DE AGENDAMENTO', 'i'));
+  const cursoMatch = allText.match(buildPendingBlockRegex('LEAD DE CURSO', 'i'));
 
   const match = agendamentoMatch ?? cursoMatch;
   if (!match) return;
@@ -1194,6 +1209,35 @@ async function handlePendingActions(
     });
   }
 
+  // Valida janela de disponibilidade para agendamentos
+  let slotWarning: string | null = null;
+  if (type === 'agendamento') {
+    const dataHorario = fields['data_e_horário_solicitados'] ?? '';
+    const timeMatch = dataHorario.match(/(\d{2}:\d{2})/);
+    const dateMatch = dataHorario.match(/\((\d{2}\/\d{2})\)/);
+    const service = fields['procedimento'] ?? '';
+    if (timeMatch?.[1] && dateMatch?.[1]) {
+      const currentYear = new Date().getFullYear();
+      const minSlots = serviceToMinSlots(service);
+      try {
+        const { valid, freeSlots } = await checkConsecutiveSlotsFree(
+          dateMatch[1], timeMatch[1], minSlots, currentYear,
+        );
+        if (!valid) {
+          slotWarning =
+            `⚠️ AVISO: slot ${timeMatch[1]} tem apenas ${freeSlots * 30} min livre` +
+            ` (serviço precisa de ~${minSlots * 30} min). Confirme a agenda antes de responder à cliente.`;
+          logger.warn(
+            { session_id: sessionId, slot: timeMatch[1], freeSlots, minSlots, service },
+            'slot validation: janela insuficiente detectada',
+          );
+        }
+      } catch (err) {
+        logger.debug({ err: err instanceof Error ? err.message : String(err) }, 'slot validation error — ignorado');
+      }
+    }
+  }
+
   // Notifica Mariana via WhatsApp
   if (!env.MARIANA_NOTIFY_PHONE) {
     logger.warn(
@@ -1215,10 +1259,10 @@ async function handlePendingActions(
     const evolution = getEvolutionClient();
     const emoji = type === 'agendamento' ? '📅' : '🎓';
     const label = type === 'agendamento' ? 'Agendamento' : 'Lead de curso';
-    const lines: string[] = [
-      `${emoji} Nova solicitação — ${label}`,
-      clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`,
-    ];
+    const lines: string[] = [];
+    if (slotWarning) lines.push(slotWarning);
+    lines.push(`${emoji} Nova solicitação — ${label}`);
+    lines.push(clientName ? `Cliente: ${clientName}` : `Telefone: ${phone}`);
 
     if (type === 'agendamento') {
       if (fields['procedimento']) lines.push(`Serviço: ${fields['procedimento']}`);

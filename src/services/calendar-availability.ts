@@ -25,14 +25,18 @@ const TIMEZONE = 'America/Sao_Paulo';
 
 // Horário de funcionamento da Mariana (unhas)
 // 0=dom, 1=seg, 2=ter, 3=qua, 4=qui, 5=sex, 6=sáb
+// Dias úteis: fim em 16:30 (não 16:00) para que o slot das 16:00 seja gerado
+// como disponível. Isso permite que o slot oficial das 15:00 passe na checagem
+// de 3 slots adjacentes (15:00, 15:30, 16:00), já que a Mariana trabalha até
+// mais tarde quando há agendamento na última faixa.
 const WORKING_HOURS_BY_WEEKDAY: Record<number, { start: number; end: number } | null> = {
-  0: null,                          // domingo: fechado
-  1: null,                          // segunda: fechada
-  2: { start: 9, end: 16 },         // terça
-  3: { start: 9, end: 16 },         // quarta
-  4: { start: 9, end: 16 },         // quinta
-  5: { start: 9, end: 16 },         // sexta
-  6: { start: 8, end: 12 },         // sábado
+  0: null,                            // domingo: fechado
+  1: null,                            // segunda: fechada
+  2: { start: 9, end: 16.5 },         // terça
+  3: { start: 9, end: 16.5 },         // quarta
+  4: { start: 9, end: 16.5 },         // quinta
+  5: { start: 9, end: 16.5 },         // sexta
+  6: { start: 8, end: 12 },           // sábado
 };
 
 // Grade oficial de horários que podem ser oferecidos pra cliente.
@@ -201,9 +205,18 @@ function buildDaySlots(
   return { weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel, slots, closed: false };
 }
 
+// Janela mínima exigida para um slot aparecer na grade oficial.
+// 3 slots = 90 min — cobre alongamento, manutenção encapsulada e todos os demais.
+// Efeito colateral: o slot 15:00 em dias úteis (ter–sex) raramente aparecerá,
+// pois exigiria 15:00, 15:30 e 16:00 livres, mas 16:00 cai fora do horário de
+// trabalho (fim às 16h). Isso é intencional — prefere-se não oferecer um slot
+// que não comporta a maioria dos serviços.
+const OFFICIAL_GRID_MIN_SLOTS = 3;
+
 /**
  * Filtra a grade oficial de um dia, mantendo apenas os horários cuja string
- * exata aparece na lista de slots livres do Calendar.
+ * exata aparece na lista de slots livres do Calendar E que têm janela contínua
+ * mínima de OFFICIAL_GRID_MIN_SLOTS × 30 min a partir desse slot.
  *
  * Esse cruzamento é feito aqui no código (e não pelo modelo) porque o
  * gpt-4.1-mini não cumpria a regra de cruzamento de forma confiável.
@@ -213,7 +226,19 @@ function buildOfficialGridSlots(day: DaySlots): string[] {
   if (day.closed) return [];
   const grid = OFFICIAL_GRID_BY_WEEKDAY[day.weekdayIdx] ?? [];
   const freeSet = new Set(day.slots);
-  return grid.filter((slot) => freeSet.has(slot));
+  return grid.filter((slot) => {
+    const parts = slot.split(':');
+    const startH = parseInt(parts[0] ?? '0', 10);
+    const startM = parseInt(parts[1] ?? '0', 10);
+    for (let i = 0; i < OFFICIAL_GRID_MIN_SLOTS; i++) {
+      const totalMin = startH * 60 + startM + i * SLOT_MINUTES;
+      const sh = Math.floor(totalMin / 60);
+      const sm = totalMin % 60;
+      const s = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
+      if (!freeSet.has(s)) return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -347,4 +372,58 @@ export function invalidateAvailabilityCache(): void {
   cachedContext = null;
   cachedClient = null;
   cachedClientCalendarId = null;
+}
+
+/**
+ * Verifica se há janela contínua suficiente a partir de um slot específico.
+ * Usado por handlePendingActions para alertar a Mariana quando o horário
+ * solicitado não comporta a duração do serviço.
+ *
+ * Retorna { valid: true } quando o calendário não está configurado ou
+ * quando ocorre falha na consulta — nesse caso assume-se que está ok e
+ * não gera aviso falso positivo.
+ */
+export async function checkConsecutiveSlotsFree(
+  dateDDMM: string,
+  timeHHMM: string,
+  minSlotsNeeded: number,
+  year: number,
+): Promise<{ valid: boolean; freeSlots: number }> {
+  const [dayStr, monthStr] = dateDDMM.split('/');
+  const day = parseInt(dayStr ?? '0', 10);
+  const month1 = parseInt(monthStr ?? '0', 10);
+  if (!day || !month1) return { valid: false, freeSlots: 0 };
+
+  const [hStr, mStr] = timeHHMM.split(':');
+  const startH = parseInt(hStr ?? '0', 10);
+  const startM = parseInt(mStr ?? '0', 10);
+
+  const client = getCalendarClient();
+  if (!client) return { valid: true, freeSlots: minSlotsNeeded };
+
+  const dayStart = spDate(year, month1, day, 0);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  let busy: BusyInterval[];
+  try {
+    busy = await fetchBusyIntervals(client.calendar, client.calendarId, dayStart, dayEnd);
+  } catch {
+    return { valid: true, freeSlots: minSlotsNeeded };
+  }
+
+  const parts = spParts(dayStart);
+  const daySlots = buildDaySlots(parts, busy);
+  const freeSet = new Set(daySlots.slots);
+
+  let count = 0;
+  for (let i = 0; i < minSlotsNeeded; i++) {
+    const totalMin = startH * 60 + startM + i * SLOT_MINUTES;
+    const sh = Math.floor(totalMin / 60);
+    const sm = totalMin % 60;
+    const s = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
+    if (!freeSet.has(s)) break;
+    count++;
+  }
+
+  return { valid: count >= minSlotsNeeded, freeSlots: count };
 }

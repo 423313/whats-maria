@@ -84,10 +84,10 @@ async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow
 export const STUDIO_STATUS_BY_WEEKDAY: Record<number, { aberto: boolean; horario: string; profissionais: string }> = {
   0: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
   1: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
-  2: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
-  3: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
-  4: { aberto: true, horario: '09h às 16h (Mariana) e 13h30 às 21h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
-  5: { aberto: true, horario: '09h às 16h', profissionais: 'Mariana (unhas)' },
+  2: { aberto: true, horario: '09h às 16h30', profissionais: 'Mariana (unhas)' },
+  3: { aberto: true, horario: '09h às 16h30', profissionais: 'Mariana (unhas)' },
+  4: { aberto: true, horario: '09h às 16h30 (Mariana) e 13h30 às 21h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
+  5: { aberto: true, horario: '09h às 16h30', profissionais: 'Mariana (unhas)' },
   6: { aberto: true, horario: '08h às 12h (Mariana) e 08h às 18h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
 };
 
@@ -211,7 +211,8 @@ export async function runAgent(input: RunAgentInput): Promise<AgentReply> {
   try {
     parsed = JSON.parse(content);
   } catch (err) {
-    logger.error({ err, content }, 'agent output JSON.parse failed');
+    // Não logar o conteúdo cru (pode conter PII/nome da cliente). Loga só o tamanho.
+    logger.error({ err, content_length: content.length }, 'agent output JSON.parse failed');
     throw new Error('agent returned invalid JSON');
   }
 

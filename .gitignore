@@ -12,3 +12,4 @@ coverage/
 .swarm/
 .claude-flow/
 ruflo-backup-*/
+.ruflo-trash/

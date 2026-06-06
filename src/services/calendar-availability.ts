@@ -16,6 +16,11 @@ import { google, type calendar_v3 } from 'googleapis';
 
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
+import {
+  WORKING_HOURS_BY_WEEKDAY,
+  OFFICIAL_GRID_BY_WEEKDAY,
+  OFFICIAL_GRID_MIN_SLOTS,
+} from '../lib/studio-schedule.js';
 
 // ───── configuração de janela e horário ─────
 
@@ -23,33 +28,8 @@ const DAYS_AHEAD = 14;
 const SLOT_MINUTES = 30;
 const TIMEZONE = 'America/Sao_Paulo';
 
-// Horário de funcionamento da Mariana (unhas)
-// 0=dom, 1=seg, 2=ter, 3=qua, 4=qui, 5=sex, 6=sáb
-// Dias úteis: fim em 16:30 (não 16:00) para que o slot das 16:00 seja gerado
-// como disponível. Isso permite que o slot oficial das 15:00 passe na checagem
-// de 3 slots adjacentes (15:00, 15:30, 16:00), já que a Mariana trabalha até
-// mais tarde quando há agendamento na última faixa.
-const WORKING_HOURS_BY_WEEKDAY: Record<number, { start: number; end: number } | null> = {
-  0: null,                            // domingo: fechado
-  1: null,                            // segunda: fechada
-  2: { start: 9, end: 16.5 },         // terça
-  3: { start: 9, end: 16.5 },         // quarta
-  4: { start: 9, end: 16.5 },         // quinta
-  5: { start: 9, end: 16.5 },         // sexta
-  6: { start: 8, end: 12 },           // sábado
-};
-
-// Grade oficial de horários que podem ser oferecidos pra cliente.
-// Pré-filtrada pelo código antes de injetar no prompt — o modelo não decide.
-const OFFICIAL_GRID_BY_WEEKDAY: Record<number, string[]> = {
-  0: [],
-  1: [],
-  2: ['09:00', '11:00', '13:00', '15:00'],
-  3: ['09:00', '11:00', '13:00', '15:00'],
-  4: ['09:00', '11:00', '13:00', '15:00'],
-  5: ['09:00', '11:00', '13:00', '15:00'],
-  6: ['08:00', '10:00'],
-};
+// WORKING_HOURS_BY_WEEKDAY e OFFICIAL_GRID_BY_WEEKDAY vêm de lib/studio-schedule
+// (fonte única — importadas no topo do arquivo).
 
 const CACHE_TTL_MS = 60_000;
 let cachedContext: { text: string; expiresAt: number } | null = null;
@@ -204,14 +184,6 @@ function buildDaySlots(
 
   return { weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel, slots, closed: false };
 }
-
-// Janela mínima exigida para um slot aparecer na grade oficial.
-// 3 slots = 90 min — cobre alongamento, manutenção encapsulada e todos os demais.
-// Efeito colateral: o slot 15:00 em dias úteis (ter–sex) raramente aparecerá,
-// pois exigiria 15:00, 15:30 e 16:00 livres, mas 16:00 cai fora do horário de
-// trabalho (fim às 16h). Isso é intencional — prefere-se não oferecer um slot
-// que não comporta a maioria dos serviços.
-const OFFICIAL_GRID_MIN_SLOTS = 3;
 
 /**
  * Filtra a grade oficial de um dia, mantendo apenas os horários cuja string

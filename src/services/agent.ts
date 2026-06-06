@@ -3,6 +3,7 @@ import { getOpenAIClient } from '../lib/openai.js';
 import { supabase } from '../lib/supabase.js';
 import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-config.js';
 import { buildAvailabilityContext } from './calendar-availability.js';
+import { STUDIO_STATUS_BY_WEEKDAY } from '../lib/studio-schedule.js';
 
 export const MEDIA_FALLBACK =
   'oi, ainda não consigo ouvir áudios ou ver imagens por aqui, pode me escrever em texto?';
@@ -76,20 +77,9 @@ async function loadHistory(sessionId: string, limit: number): Promise<HistoryRow
   return ((data ?? []) as HistoryRow[]).reverse();
 }
 
-// Exportado para testes unitários — permite verificar que cada dia da semana
-// tem o status correto (open/closed) sem depender de Date.
-// Dia da semana → status do studio (atende ou fechado)
-// Mariana: terça (2) a sexta (5) das 09h-16h, sábado (6) das 08h-12h
-// Fechado: segunda (1) e domingo (0)
-export const STUDIO_STATUS_BY_WEEKDAY: Record<number, { aberto: boolean; horario: string; profissionais: string }> = {
-  0: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
-  1: { aberto: false, horario: 'FECHADO', profissionais: 'nenhum' },
-  2: { aberto: true, horario: '09h às 16h30', profissionais: 'Mariana (unhas)' },
-  3: { aberto: true, horario: '09h às 16h30', profissionais: 'Mariana (unhas)' },
-  4: { aberto: true, horario: '09h às 16h30 (Mariana) e 13h30 às 21h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
-  5: { aberto: true, horario: '09h às 16h30', profissionais: 'Mariana (unhas)' },
-  6: { aberto: true, horario: '08h às 12h (Mariana) e 08h às 18h (Scarlet)', profissionais: 'Mariana (unhas) e Scarlet (sobrancelhas/cílios)' },
-};
+// Status do studio por dia da semana — fonte única em lib/studio-schedule
+// (importado acima). Re-exportado para manter a API usada pelos testes.
+export { STUDIO_STATUS_BY_WEEKDAY };
 
 /**
  * Calcula a data e hora atual no fuso de São Paulo de forma robusta usando

@@ -63,3 +63,14 @@ export const OFFICIAL_GRID_BY_WEEKDAY: Record<number, string[]> = {
 // Janela mínima (em slots de 30 min) exigida para um horário aparecer na grade.
 // 3 slots = 90 min — cobre alongamento, manutenção encapsulada e os demais serviços.
 export const OFFICIAL_GRID_MIN_SLOTS = 3;
+
+// Localização do studio — usada pelo token [LOCALIZACAO] (pin nativo do WhatsApp)
+// e pelo link do Google Maps. As coordenadas são nível de rua (Rua México,
+// Bacacheri); AJUSTE para o pin exato do studio se precisar de mais precisão.
+export const STUDIO_LOCATION = {
+  name: 'Studio Mariana Castro',
+  address: 'Rua México, 223 — Sobreloja, Sala 2 — Bacacheri, Curitiba/PR',
+  latitude: -25.4105344,
+  longitude: -49.2360707,
+  mapsUrl: 'https://www.google.com/maps/search/?api=1&query=Rua+M%C3%A9xico%2C+223+-+Bacacheri%2C+Curitiba+-+PR',
+};

@@ -14,6 +14,7 @@ import {
 } from './buffer.js';
 import { resetFollowupState } from './followup.js';
 import { pendingBlockRemovalRegex } from '../lib/pending-block.js';
+import { STUDIO_LOCATION } from '../lib/studio-schedule.js';
 import { handlePendingActions } from './pending-actions.js';
 import { updateMarianaManualAt, isWithinMarianaManualWindow } from './human-takeover.js';
 import { routeMessage, extractText } from './message-routing.js';
@@ -643,6 +644,8 @@ async function flushSession(sessionId: string): Promise<void> {
   ];
   const CARDS_TOKEN = '[CARDS_CURSO]';
 
+  const LOCALIZACAO_TOKEN = '[LOCALIZACAO]';
+
   // Blocos estruturados que devem ser detectados e REMOVIDOS do texto enviado
   // pra cliente. Mesmo padrão usado em handlePendingActions (lib/pending-block).
   const PENDING_BLOCK_REGEX = pendingBlockRemovalRegex();
@@ -666,18 +669,27 @@ async function flushSession(sessionId: string): Promise<void> {
     const rawText = mensagens[i]!;
     const hasTabela = rawText.includes(TABELA_TOKEN);
     const hasCards = rawText.includes(CARDS_TOKEN);
+    const hasLocalizacao = rawText.includes(LOCALIZACAO_TOKEN);
 
     // Captura motivos de escalação ANTES de remover do texto.
     const escalarMatches = [...rawText.matchAll(ESCALAR_TOKEN_REGEX)];
     const escalarMotivos = escalarMatches.map((m) => m[1]!.toLowerCase());
 
-    const text = rawText
+    let text = rawText
       .replace(TABELA_TOKEN, '')
       .replace(CARDS_TOKEN, '')
+      .replace(LOCALIZACAO_TOKEN, '')
       .replace(PENDING_BLOCK_REGEX, '')
       .replace(ESCALAR_TOKEN_REGEX, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+
+    // Localização: garante o link do Google Maps no texto (o pin nativo vai
+    // separado, abaixo). Assim a cliente recebe link + pin mesmo se o modelo
+    // não escrever o link.
+    if (hasLocalizacao && !text.includes('maps')) {
+      text = `${text}\n\n📍 Como chegar: ${STUDIO_LOCATION.mapsUrl}`.trim();
+    }
     const pendingId = await persistAssistantPending({
       sessionId,
       instance,
@@ -721,6 +733,25 @@ async function flushSession(sessionId: string): Promise<void> {
           if (mediaResult.messageId) {
             registerFloraEcho(mediaResult.messageId);
           }
+        }
+      }
+      if (hasLocalizacao) {
+        await delay(interMsgMs);
+        try {
+          const locResult = await evolution.sendLocation(instance, sessionId, {
+            name: STUDIO_LOCATION.name,
+            address: STUDIO_LOCATION.address,
+            latitude: STUDIO_LOCATION.latitude,
+            longitude: STUDIO_LOCATION.longitude,
+          });
+          // Registra o ID do eco (igual a sendMedia) pra não ativar janela da Mariana.
+          if (locResult.messageId) registerFloraEcho(locResult.messageId);
+        } catch (err) {
+          // Não derruba o flush — o texto + link já foram enviados.
+          logger.warn(
+            { err: err instanceof Error ? err.message : String(err), session_id: sessionId },
+            'sendLocation falhou (texto+link já enviados)',
+          );
         }
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);

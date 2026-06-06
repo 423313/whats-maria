@@ -139,6 +139,59 @@ export class EvolutionClient {
   }
 
   /**
+   * Envia uma mensagem de localização (pin nativo do WhatsApp) para o número.
+   */
+  async sendLocation(
+    instance: string,
+    to: string,
+    location: { name: string; address: string; latitude: number; longitude: number },
+  ): Promise<SendTextResult> {
+    const number = normalizePhone(to);
+    if (!number) throw new Error(`invalid phone: ${to}`);
+
+    const url = `${this.baseUrl}/message/sendLocation/${encodeURIComponent(instance)}`;
+    const body = {
+      number,
+      name: location.name,
+      address: location.address,
+      latitude: location.latitude,
+      longitude: location.longitude,
+    };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: this.apiKey },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      logger.warn(
+        { status: response.status, body: responseText, instance, to: number },
+        'evolution sendLocation failed',
+      );
+      throw new EvolutionError(
+        `Evolution sendLocation failed: ${response.status}`,
+        response.status,
+        responseText,
+      );
+    }
+
+    let json: unknown;
+    try { json = JSON.parse(responseText); } catch { json = { raw: responseText }; }
+    return { messageId: extractMessageId(json), raw: json };
+  }
+
+  /**
    * Busca mensagens recentes de uma sessão (chat) específica via Evolution API.
    * Usado como fallback para detectar mensagens enviadas pela Mariana diretamente
    * do celular que possam não ter chegado via webhook.

@@ -9,6 +9,7 @@ import { runAgent } from './agent.js';
 import {
   addToBuffer,
   cancelPendingFlush,
+  claimPendingBuffer,
   discardPendingBuffer,
   markBufferProcessed,
   peekPendingBuffer,
@@ -934,8 +935,17 @@ async function flushSession(sessionId: string): Promise<void> {
     return;
   }
 
-  const bufferIds = rows.map((r) => r.id);
-  const instance = rows[0]!.instance;
+  // Reivindica o buffer ATOMICAMENTE antes de qualquer trabalho (runAgent/envio).
+  // Em multi-réplica, dois flushes podem passar pelos checks acima, mas só UM ganha
+  // o UPDATE com guard processed_at IS NULL. O perdedor recebe [] e aborta AQUI —
+  // antes de chamar a OpenAI e antes de enviar qualquer mensagem (evita resposta
+  // duplicada à cliente). Antes, a reivindicação só acontecia depois do runAgent.
+  const claimedRows = await claimPendingBuffer(sessionId);
+  if (claimedRows.length === 0) {
+    logger.info({ session_id: sessionId }, 'flush abortado (buffer já reivindicado por outro flush)');
+    return;
+  }
+  const instance = claimedRows[0]!.instance;
   const evolution = getEvolutionClient();
 
   let config: AgentConfig | null = null;
@@ -951,7 +961,7 @@ async function flushSession(sessionId: string): Promise<void> {
   const typingMs = config?.typing_ms ?? 1000;
   const interMsgMs = config?.inter_message_delay_ms ?? 1000;
 
-  const concatenated = rows
+  const concatenated = claimedRows
     .filter((r) => !!r.mensagem)
     .map((r) => r.mensagem)
     .join('\n\n');
@@ -1042,30 +1052,7 @@ async function flushSession(sessionId: string): Promise<void> {
       tokensOut: i === 0 ? tokensOut : 0,
     });
 
-    if (i === 0) {
-      try {
-        const claimed = await markBufferProcessed(bufferIds);
-        if (claimed === 0) {
-          logger.info(
-            { session_id: sessionId, buffer_ids: bufferIds },
-            'flush aborted (buffer already claimed by another flush)',
-          );
-          if (pendingId) {
-            await markAssistantFailed(pendingId, 'aborted: buffer already claimed');
-          }
-          return;
-        }
-      } catch (err) {
-        logger.error(
-          { err: err instanceof Error ? err.message : String(err), session_id: sessionId },
-          'markBufferProcessed failed, aborting flush',
-        );
-        if (pendingId) {
-          await markAssistantFailed(pendingId, 'aborted: mark buffer processed failed');
-        }
-        return;
-      }
-    }
+    // Buffer já foi reivindicado atomicamente no início do flush (claimPendingBuffer).
 
     try {
       await evolution.sendPresence(instance, sessionId, 'composing', typingMs);

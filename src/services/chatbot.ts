@@ -17,9 +17,21 @@ import {
 } from './buffer.js';
 import { resetFollowupState } from './followup.js';
 import { buildPendingBlockRegex, pendingBlockRemovalRegex } from '../lib/pending-block.js';
+import {
+  type PersistMessageInput,
+  persistIncomingMessage,
+  persistAssistantMessage,
+  persistAssistantPending,
+  markAssistantSent,
+  markAssistantFailed,
+  ensureChatControl,
+  hasRecentPendingFloraReply,
+  isAIPaused,
+  saveClientNameIfMissing,
+  saveClientName,
+} from './chat-repository.js';
 import { isProcessableMedia, processMedia, mediaLabel } from './media.js';
 import {
-  PENDING_ECHO_WINDOW_MS,
   registerFloraEcho,
   isFloraEcho,
 } from '../lib/echo-registry.js';
@@ -669,196 +681,6 @@ function getDocumentSize(message: Record<string, unknown>): number | null {
     if (typeof low === 'number') return low;
   }
   return null;
-}
-
-interface PersistMessageInput {
-  sessionId: string;
-  instance: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
-  content: string;
-  mediaType?: string | null;
-  transcription?: string | null;
-  evolutionMessageId?: string | null;
-  pushName?: string | null;
-  model?: string | null;
-  tokensIn?: number | null;
-  tokensOut?: number | null;
-  status?: string | null;
-}
-
-async function persistIncomingMessage(input: PersistMessageInput): Promise<void> {
-  const { error } = await supabase.from('chat_messages').insert({
-    session_id: input.sessionId,
-    instance: input.instance,
-    role: input.role,
-    content: input.content,
-    media_type: input.mediaType ?? null,
-    transcription: input.transcription ?? null,
-    evolution_message_id: input.evolutionMessageId ?? null,
-    status: input.status ?? 'received',
-    metadata: input.pushName ? { push_name: input.pushName } : {},
-  });
-  if (error && error.code !== '23505') {
-    logger.warn({ err: error.message, session_id: input.sessionId }, 'chat_messages insert failed');
-  }
-}
-
-async function persistAssistantMessage(input: PersistMessageInput): Promise<void> {
-  const { error } = await supabase.from('chat_messages').insert({
-    session_id: input.sessionId,
-    instance: input.instance,
-    role: input.role,
-    content: input.content,
-    media_type: input.mediaType ?? null,
-    transcription: input.transcription ?? null,
-    evolution_message_id: input.evolutionMessageId ?? null,
-    status: input.status ?? 'sent',
-    model: input.model ?? null,
-    tokens_in: input.tokensIn ?? null,
-    tokens_out: input.tokensOut ?? null,
-    metadata: input.pushName ? { sender: input.pushName } : {},
-  });
-  if (error) {
-    logger.warn({ err: error.message, session_id: input.sessionId }, 'chat_messages assistant insert failed');
-  }
-}
-
-async function persistAssistantPending(input: PersistMessageInput): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .insert({
-      session_id: input.sessionId,
-      instance: input.instance,
-      role: input.role,
-      content: input.content,
-      status: 'pending',
-      model: input.model ?? null,
-      tokens_in: input.tokensIn ?? null,
-      tokens_out: input.tokensOut ?? null,
-    })
-    .select('id')
-    .single();
-  if (error) {
-    logger.warn(
-      { err: error.message, session_id: input.sessionId },
-      'chat_messages pending insert failed',
-    );
-    return null;
-  }
-  return (data?.id as string) ?? null;
-}
-
-async function markAssistantSent(
-  id: string,
-  evolutionMessageId: string | null,
-): Promise<void> {
-  const { error } = await supabase
-    .from('chat_messages')
-    .update({ status: 'sent', evolution_message_id: evolutionMessageId })
-    .eq('id', id)
-    .eq('status', 'pending');
-  if (error) {
-    logger.warn({ err: error.message, id }, 'chat_messages mark sent failed');
-  }
-}
-
-async function markAssistantFailed(id: string, reason: string): Promise<void> {
-  const { error } = await supabase
-    .from('chat_messages')
-    .update({ status: 'failed', metadata: { error: reason.slice(0, 500) } })
-    .eq('id', id)
-    .eq('status', 'pending');
-  if (error) {
-    logger.warn({ err: error.message, id }, 'chat_messages mark failed failed');
-  }
-}
-
-async function ensureChatControl(
-  sessionId: string,
-  instance: string,
-  agentType: string,
-): Promise<void> {
-  const { error } = await supabase.from('chat_control').upsert(
-    {
-      session_id: sessionId,
-      instance,
-      agent_type: agentType,
-    },
-    { onConflict: 'session_id' },
-  );
-  if (error) {
-    logger.debug({ err: error.message, session_id: sessionId }, 'chat_control upsert noop');
-  }
-}
-
-// Echo registry centralizado em lib/echo-registry.ts — usado também por
-// followup.ts e admin.ts para registrar IDs de mensagens que Flora envia
-// fora deste módulo (follow-ups, mensagens auto pós-decisão de pendência).
-
-// Fallback via DB: detecta eco quando o messageId não está disponível no registry
-// Busca TANTO 'pending' QUANTO 'sent' porque o status pode mudar entre envio e webhook
-async function hasRecentPendingFloraReply(sessionId: string): Promise<boolean> {
-  const cutoff = new Date(Date.now() - PENDING_ECHO_WINDOW_MS).toISOString();
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .select('id')
-    .eq('session_id', sessionId)
-    .eq('role', 'assistant')
-    .in('status', ['pending', 'sent'])
-    .gte('created_at', cutoff)
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    logger.warn(
-      { err: error.message, session_id: sessionId },
-      'hasRecentPendingFloraReply query failed',
-    );
-    return false;
-  }
-  return !!data;
-}
-
-async function isAIPaused(sessionId: string): Promise<boolean> {
-  const { data, error } = await supabase.rpc('is_ai_paused', { p_session_id: sessionId });
-  if (error) {
-    logger.warn({ err: error.message, session_id: sessionId }, 'is_ai_paused rpc failed');
-    return false;
-  }
-  return data === true;
-}
-
-/**
- * Salva o nome da cliente apenas se ainda não houver nome registrado (prioridade: nome
- * explícito informado pelo cliente > pushName do WhatsApp).
- */
-async function saveClientNameIfMissing(sessionId: string, name: string): Promise<void> {
-  const clean = name.trim();
-  if (!clean) return;
-  const { error } = await supabase
-    .from('chat_control')
-    .update({ client_name: clean, updated_at: new Date().toISOString() })
-    .eq('session_id', sessionId)
-    .is('client_name', null); // só grava se ainda não tem nome (não sobrescreve nome explícito)
-  if (error) {
-    logger.debug({ err: error.message, session_id: sessionId }, 'saveClientNameIfMissing noop');
-  }
-}
-
-/**
- * Salva (ou atualiza) o nome explícito informado pela cliente — tem prioridade sobre pushName.
- */
-async function saveClientName(sessionId: string, name: string): Promise<void> {
-  const clean = name.trim();
-  if (!clean) return;
-  const { error } = await supabase
-    .from('chat_control')
-    .update({ client_name: clean, updated_at: new Date().toISOString() })
-    .eq('session_id', sessionId);
-  if (error) {
-    logger.warn({ err: error.message, session_id: sessionId }, 'saveClientName failed');
-  } else {
-    logger.info({ session_id: sessionId, name: clean }, 'nome da cliente registrado');
-  }
 }
 
 async function updateMarianaManualAt(sessionId: string): Promise<void> {

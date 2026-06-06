@@ -410,7 +410,19 @@ WHERE agent_type = 'default';
 ## Segredos — NUNCA commitar
 
 - `.env`
-- `.mcp.json`
+- `.mcp.json` (contém a chave de criptografia da memória do ruflo)
 - Qualquer arquivo dentro de `.claude/`
+- `.swarm/` (memória do ruflo), `.claude-flow/`, `.ruflo-trash/`
 
 Se commitar por acidente, girar as chaves imediatamente: OpenAI, Supabase service-role, Evolution API key.
+
+---
+
+## Ferramentas de IA no projeto (ruflo)
+
+Este projeto usa o **ruflo** (claude-flow) como camada de orquestração multi-agente + memória persistente. Guia completo de uso no CLAUDE.md global (`~/.claude/CLAUDE.md`). Estado neste projeto:
+
+- **MCP do ruflo registrado** no `.mcp.json` (stdio via `cmd /c npx`, padrão Windows). As ferramentas `mcp__ruflo__*` ficam disponíveis após reconectar a sessão.
+- **Memória persistente ativa** em `.swarm/memory.db` (backend híbrido + HNSW + criptografia em repouso). Contém o contexto do projeto (status SaaS, bloqueadores, bugs, progresso). Use `npx ruflo memory search -q "..."` antes de tarefas grandes.
+- **Chave de criptografia** vive só no `.mcp.json` (gitignored). Manter cópia em gestor de senhas — sem ela a memória cifrada fica ilegível.
+- **Varredor de lixo:** um hook do ruflo cria arquivos vazios por engano na raiz; o hook `PostToolUse` extra (`scripts/maintenance/sweep-ruflo-junk.mjs`) move esse lixo para `.ruflo-trash/` automaticamente. A ligação do hook está no `.claude/settings.json` (local, não versionado).

@@ -684,12 +684,10 @@ async function flushSession(sessionId: string): Promise<void> {
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    // Localização: garante o link do Google Maps no texto (o pin nativo vai
-    // separado, abaixo). Assim a cliente recebe link + pin mesmo se o modelo
-    // não escrever o link.
-    if (hasLocalizacao && !text.includes('maps')) {
-      text = `${text}\n\n📍 Como chegar: ${STUDIO_LOCATION.mapsUrl}`.trim();
-    }
+    // Localização: NÃO anexamos link nem endereço no texto. A cliente deve
+    // receber SOMENTE o pin nativo do WhatsApp (enviado separado, abaixo) — que
+    // já carrega nome + endereço no próprio card. O link do Maps entra apenas
+    // como fallback se o envio do pin falhar (ver catch do sendLocation).
     const pendingId = await persistAssistantPending({
       sessionId,
       instance,
@@ -747,11 +745,22 @@ async function flushSession(sessionId: string): Promise<void> {
           // Registra o ID do eco (igual a sendMedia) pra não ativar janela da Mariana.
           if (locResult.messageId) registerFloraEcho(locResult.messageId);
         } catch (err) {
-          // Não derruba o flush — o texto + link já foram enviados.
+          // Pin falhou — manda o link do Maps como fallback pra cliente não ficar
+          // sem nada. No caminho feliz, ela recebe SÓ o pin nativo (igual à imagem).
           logger.warn(
             { err: err instanceof Error ? err.message : String(err), session_id: sessionId },
-            'sendLocation falhou (texto+link já enviados)',
+            'sendLocation falhou — enviando link do Maps como fallback',
           );
+          try {
+            const fb = await evolution.sendText(
+              instance,
+              sessionId,
+              `📍 Como chegar: ${STUDIO_LOCATION.mapsUrl}`,
+            );
+            if (fb.messageId) registerFloraEcho(fb.messageId);
+          } catch {
+            // se nem o fallback for, desiste silenciosamente (não derruba o flush)
+          }
         }
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);

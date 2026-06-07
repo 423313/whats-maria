@@ -154,6 +154,7 @@ function spDate(year: number, month1: number, day: number, hour: number, minute 
 function buildDaySlots(
   spDay: { year: number; month1: number; day: number; weekdayIdx: number },
   busy: BusyInterval[],
+  nowMs: number,
 ): DaySlots {
   const weekdayLabel = WEEKDAY_LABELS[spDay.weekdayIdx] ?? '?';
   const dateLabel = `${String(spDay.day).padStart(2, '0')}/${String(spDay.month1).padStart(2, '0')}`;
@@ -172,6 +173,10 @@ function buildDaySlots(
       // Garante que o slot inteiro está dentro do horário comercial
       const endHour = hour + (minute + SLOT_MINUTES) / 60;
       if (endHour > hours.end) continue;
+
+      // Não oferece horários que já passaram (relevante pro dia de hoje —
+      // sem isso a Flora oferecia "hoje 08:00" às 22h da noite).
+      if (slotStart.getTime() < nowMs) continue;
 
       const overlaps = busy.some(
         (b) => b.startMs < slotEnd.getTime() && b.endMs > slotStart.getTime(),
@@ -317,7 +322,7 @@ export async function buildAvailabilityContext(): Promise<string> {
   }
 
   try {
-    const today = spParts(new Date());
+    const today = spParts(new Date(now));
     const startSp = spDate(today.year, today.month1, today.day, 0);
     const endSp = new Date(startSp.getTime() + DAYS_AHEAD * 24 * 60 * 60 * 1000);
 
@@ -327,7 +332,7 @@ export async function buildAvailabilityContext(): Promise<string> {
     for (let i = 0; i < DAYS_AHEAD; i++) {
       const dayStart = new Date(startSp.getTime() + i * 24 * 60 * 60 * 1000);
       const parts = spParts(dayStart);
-      days.push(buildDaySlots(parts, busy));
+      days.push(buildDaySlots(parts, busy, now));
     }
 
     const text = formatContext(days);
@@ -384,7 +389,7 @@ export async function checkConsecutiveSlotsFree(
   }
 
   const parts = spParts(dayStart);
-  const daySlots = buildDaySlots(parts, busy);
+  const daySlots = buildDaySlots(parts, busy, Date.now());
   const freeSet = new Set(daySlots.slots);
 
   let count = 0;

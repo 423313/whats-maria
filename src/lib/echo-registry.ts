@@ -9,10 +9,18 @@
  * Como usar: registre o `messageId` retornado por `evolution.sendText` ou
  * `evolution.sendMedia` ANTES de qualquer await subsequente. Quando o webhook
  * de eco chegar, `isFloraEcho(id)` retornará `true` para esses IDs durante
- * `PENDING_ECHO_WINDOW_MS` (90s).
+ * `PENDING_ECHO_WINDOW_MS`.
+ *
+ * Esse valor também precisa cobrir o `mariana-monitor` (fallback via polling):
+ * ele varre mensagens `fromMe=true` dos últimos `LOOKBACK_WINDOW_MS` (10 min)
+ * a cada 30s. Se a Evolution demorar a expor uma mídia/localização enviada pela
+ * Flora via `findMessages` (o que acontece na prática — já vimos detecção ~2min
+ * após o envio), uma janela curta deixa o registry expirar antes do polling
+ * conseguir reconhecer o eco, ativando a janela da Mariana por engano. Por isso
+ * o valor é maior que o lookback do polling, com folga.
  */
 
-export const PENDING_ECHO_WINDOW_MS = 90_000;
+export const PENDING_ECHO_WINDOW_MS = 12 * 60_000;
 
 const registry = new Map<string, number>(); // messageId → timestamp
 

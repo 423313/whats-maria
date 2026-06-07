@@ -13,6 +13,7 @@
  */
 
 import { env } from '../config/env.js';
+import { isFloraEcho } from '../lib/echo-registry.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 import { logger } from '../lib/logger.js';
 import { supabase } from '../lib/supabase.js';
@@ -193,7 +194,11 @@ async function checkSession(
   }
 
   const knownIds = new Set((known ?? []).map((r) => r.evolution_message_id));
-  const desconhecidos = candidatos.filter((m) => !knownIds.has(m.keyId));
+  // Mídia/localização enviada pela própria Flora (sendMedia/sendLocation) é
+  // registrada só no echo-registry em memória, não em chat_messages — sem essa
+  // checagem, o polling confunde o eco com mensagem manual da Mariana e ativa
+  // a janela de 24h indevidamente, silenciando a Flora (ver isFloraEcho).
+  const desconhecidos = candidatos.filter((m) => !knownIds.has(m.keyId) && !isFloraEcho(m.keyId));
 
   if (desconhecidos.length === 0) return;
 

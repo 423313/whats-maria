@@ -78,7 +78,7 @@ function getCalendarClient(): { calendar: calendar_v3.Calendar; calendarId: stri
 
 // ───── leitura dos eventos (busy intervals) ─────
 
-interface BusyInterval {
+export interface BusyInterval {
   startMs: number;
   endMs: number;
 }
@@ -157,7 +157,7 @@ function spDate(year: number, month1: number, day: number, hour: number, minute 
   return new Date(iso);
 }
 
-function buildDaySlots(
+export function buildDaySlots(
   spDay: { year: number; month1: number; day: number; weekdayIdx: number },
   busy: BusyInterval[],
   nowMs: number,
@@ -173,29 +173,32 @@ function buildDaySlots(
     };
   }
 
-  // Limites do expediente do dia em ms (pra localizar o 1º agendamento).
-  const workStartMs = spDate(
-    spDay.year, spDay.month1, spDay.day,
-    Math.floor(hours.start), Math.round((hours.start % 1) * 60),
-  ).getTime();
-  const workEndMs = spDate(
-    spDay.year, spDay.month1, spDay.day,
-    Math.floor(hours.end), Math.round((hours.end % 1) * 60),
-  ).getTime();
-
-  // Início do primeiro agendamento que cai dentro do expediente (clamp na abertura,
-  // pra eventos que começam antes do horário comercial). Ancora a grade do sábado.
-  let firstStartMs: number | null = null;
-  for (const b of busy) {
-    if (b.startMs < workEndMs && b.endMs > workStartMs) {
-      const s = Math.max(b.startMs, workStartMs);
-      if (firstStartMs === null || s < firstStartMs) firstStartMs = s;
-    }
-  }
+  // O início do 1º agendamento do dia só importa para o trilho dinâmico do sábado,
+  // então só é calculado lá (evita varrer os eventos à toa nos dias úteis).
   let firstEventStartMin: number | null = null;
-  if (firstStartMs !== null) {
-    const { hour, minute } = toSpHourMinute(firstStartMs);
-    firstEventStartMin = hour * 60 + minute;
+  if (spDay.weekdayIdx === SATURDAY_WEEKDAY) {
+    const workStartMs = spDate(
+      spDay.year, spDay.month1, spDay.day,
+      Math.floor(hours.start), Math.round((hours.start % 1) * 60),
+    ).getTime();
+    const workEndMs = spDate(
+      spDay.year, spDay.month1, spDay.day,
+      Math.floor(hours.end), Math.round((hours.end % 1) * 60),
+    ).getTime();
+
+    // Início do primeiro agendamento que cai dentro do expediente (clamp na abertura,
+    // pra eventos que começam antes do horário comercial).
+    let firstStartMs: number | null = null;
+    for (const b of busy) {
+      if (b.startMs < workEndMs && b.endMs > workStartMs) {
+        const s = Math.max(b.startMs, workStartMs);
+        if (firstStartMs === null || s < firstStartMs) firstStartMs = s;
+      }
+    }
+    if (firstStartMs !== null) {
+      const { hour, minute } = toSpHourMinute(firstStartMs);
+      firstEventStartMin = hour * 60 + minute;
+    }
   }
 
   const slots: string[] = [];
@@ -237,13 +240,16 @@ function buildDaySlots(
  * Pré-filtrando, o modelo só copia o que está no bloco.
  */
 /**
- * Grade dinâmica do SÁBADO. Em vez de horários fixos, o sábado segue um "trilho"
- * de atendimentos espaçados de SATURDAY_GRID_STEP_MIN (2h), ancorado no horário do
- * PRIMEIRO agendamento do dia:
- *   - 1º agendamento às 08:00 → trilho 08:00, 10:00, 12:00... (08:00 ocupado → oferece 10:00)
- *   - 1º agendamento às 09:00 → trilho 09:00, 11:00, 13:00... (09:00 ocupado → oferece 11:00)
- *   - nenhum agendamento      → trilho a partir da abertura (08:00) → 08:00, 10:00
- * Horários ANTES do primeiro agendamento não entram (a Mariana já começou o dia ali).
+ * Grade dinâmica do SÁBADO. Os atendimentos são espaçados de SATURDAY_GRID_STEP_MIN
+ * (2h). O trilho sempre começa na ABERTURA, mas alinhado à "paridade" do horário do
+ * PRIMEIRO agendamento do dia (o offset, em relação à abertura, módulo 2h):
+ *   - 1º agendamento às 08:00 (ou 10:00, 12:00...) → trilho PAR: 08:00, 10:00, 12:00...
+ *   - 1º agendamento às 09:00 (ou 11:00...)        → trilho ÍMPAR: 09:00, 11:00, 13:00...
+ *   - nenhum agendamento                           → trilho PAR a partir da abertura
+ * Horários livres ANTERIORES ao 1º agendamento SÃO oferecidos, desde que pertençam
+ * ao trilho. Ex.: único agendamento às 10:00 → trilho par → o 08:00 livre é oferecido.
+ * (No trilho ímpar o 08:00 não entra de propósito: ofertá-lo deixaria atendimentos a
+ * 1h de distância, quebrando o espaçamento de 2h.)
  * A filtragem por disponibilidade real (slots livres + duração mínima) continua
  * sendo aplicada por buildOfficialGridSlots sobre esta grade.
  */
@@ -252,9 +258,18 @@ export function buildSaturdayGrid(day: DaySlots): string[] {
   if (!hours) return [];
   const startMin = Math.round(hours.start * 60);
   const endMin = Math.round(hours.end * 60);
-  const base = Math.max(day.firstEventStartMin ?? startMin, startMin);
+  const step = SATURDAY_GRID_STEP_MIN;
+
+  // Offset do trilho em relação à abertura (mantém a paridade do 1º agendamento).
+  // Sem agendamento, offset 0 → trilho a partir da abertura.
+  let offset = 0;
+  if (day.firstEventStartMin !== null) {
+    const diff = day.firstEventStartMin - startMin;
+    offset = ((diff % step) + step) % step; // módulo sempre positivo
+  }
+
   const grid: string[] = [];
-  for (let m = base; m < endMin; m += SATURDAY_GRID_STEP_MIN) {
+  for (let m = startMin + offset; m < endMin; m += step) {
     const h = Math.floor(m / 60);
     const mm = m % 60;
     grid.push(`${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);

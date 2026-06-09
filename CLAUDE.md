@@ -234,7 +234,7 @@ URLs das imagens hospedadas no Supabase Storage:
 `calendar-availability.ts` lê o Google Calendar da Mariana (sincronizado pelo `belasis-sync`) e gera um bloco de texto injetado no system prompt a cada chamada do agente.
 
 - Grade oficial oferecida: ter/qua/qui/sex 09h, 11h, 13h, 15h
-- **Sábado tem grade DINÂMICA** (`buildSaturdayGrid`): trilho de atendimentos de 2 em 2h ancorado no horário do PRIMEIRO agendamento do dia. 1º às 08h → oferece 10h; 1º às 09h → oferece 11h; sem agendamento → oferece 08h e 10h. Expediente interno do sábado vai até 13h (não 12h) só pra o slot das 11h ter janela de 90 min; o texto de status que a Flora fala continua "08h às 12h".
+- **Sábado tem grade DINÂMICA** (`buildSaturdayGrid`): trilho de atendimentos de 2 em 2h alinhado à PARIDADE do 1º agendamento do dia (offset de 2h a partir da abertura), começando sempre na abertura. 1º às 08h → trilho par, oferece 10h; 1º às 09h → trilho ímpar, oferece 11h (08h livre NÃO entra, manteria atendimentos a 1h); 1º às 10h → trilho par, oferece o 08h livre; sem agendamento → oferece 08h e 10h. Expediente interno do sábado vai até 13h (não 12h) só pra o slot das 11h ter janela de 90 min; o texto de status que a Flora fala continua "08h às 12h".
 - Slots de 30 min cruzados com eventos do Calendar para identificar livres
 - Cache: 60s em memória
 - Fallback: se Calendar indisponível, injeta mensagem pedindo para aguardar a Mariana confirmar

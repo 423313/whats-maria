@@ -20,6 +20,8 @@ import {
   WORKING_HOURS_BY_WEEKDAY,
   OFFICIAL_GRID_BY_WEEKDAY,
   OFFICIAL_GRID_MIN_SLOTS,
+  SATURDAY_WEEKDAY,
+  SATURDAY_GRID_STEP_MIN,
 } from '../lib/studio-schedule.js';
 
 // ───── configuração de janela e horário ─────
@@ -114,12 +116,16 @@ async function fetchBusyIntervals(
 
 // ───── geração de slots livres ─────
 
-interface DaySlots {
+export interface DaySlots {
   weekdayLabel: string;     // "ter", "qua"...
   weekdayIdx: number;       // 0=dom..6=sáb (pra cruzar com a grade oficial)
   dateLabel: string;        // "12/05"
   slots: string[];          // ["09:00", "09:30", ...]
   closed: boolean;          // true se dom/seg
+  // Minuto (desde 00:00 no fuso SP) do início do PRIMEIRO agendamento do dia que
+  // cai dentro do expediente. Usado só no sábado, pra ancorar a grade dinâmica
+  // (ver buildSaturdayGrid). null = nenhum agendamento naquele dia.
+  firstEventStartMin: number | null;
 }
 
 const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
@@ -161,7 +167,35 @@ function buildDaySlots(
 
   const hours = WORKING_HOURS_BY_WEEKDAY[spDay.weekdayIdx];
   if (!hours) {
-    return { weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel, slots: [], closed: true };
+    return {
+      weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel,
+      slots: [], closed: true, firstEventStartMin: null,
+    };
+  }
+
+  // Limites do expediente do dia em ms (pra localizar o 1º agendamento).
+  const workStartMs = spDate(
+    spDay.year, spDay.month1, spDay.day,
+    Math.floor(hours.start), Math.round((hours.start % 1) * 60),
+  ).getTime();
+  const workEndMs = spDate(
+    spDay.year, spDay.month1, spDay.day,
+    Math.floor(hours.end), Math.round((hours.end % 1) * 60),
+  ).getTime();
+
+  // Início do primeiro agendamento que cai dentro do expediente (clamp na abertura,
+  // pra eventos que começam antes do horário comercial). Ancora a grade do sábado.
+  let firstStartMs: number | null = null;
+  for (const b of busy) {
+    if (b.startMs < workEndMs && b.endMs > workStartMs) {
+      const s = Math.max(b.startMs, workStartMs);
+      if (firstStartMs === null || s < firstStartMs) firstStartMs = s;
+    }
+  }
+  let firstEventStartMin: number | null = null;
+  if (firstStartMs !== null) {
+    const { hour, minute } = toSpHourMinute(firstStartMs);
+    firstEventStartMin = hour * 60 + minute;
   }
 
   const slots: string[] = [];
@@ -187,7 +221,10 @@ function buildDaySlots(
     }
   }
 
-  return { weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel, slots, closed: false };
+  return {
+    weekdayLabel, weekdayIdx: spDay.weekdayIdx, dateLabel,
+    slots, closed: false, firstEventStartMin,
+  };
 }
 
 /**
@@ -199,9 +236,37 @@ function buildDaySlots(
  * gpt-4.1-mini não cumpria a regra de cruzamento de forma confiável.
  * Pré-filtrando, o modelo só copia o que está no bloco.
  */
-function buildOfficialGridSlots(day: DaySlots): string[] {
+/**
+ * Grade dinâmica do SÁBADO. Em vez de horários fixos, o sábado segue um "trilho"
+ * de atendimentos espaçados de SATURDAY_GRID_STEP_MIN (2h), ancorado no horário do
+ * PRIMEIRO agendamento do dia:
+ *   - 1º agendamento às 08:00 → trilho 08:00, 10:00, 12:00... (08:00 ocupado → oferece 10:00)
+ *   - 1º agendamento às 09:00 → trilho 09:00, 11:00, 13:00... (09:00 ocupado → oferece 11:00)
+ *   - nenhum agendamento      → trilho a partir da abertura (08:00) → 08:00, 10:00
+ * Horários ANTES do primeiro agendamento não entram (a Mariana já começou o dia ali).
+ * A filtragem por disponibilidade real (slots livres + duração mínima) continua
+ * sendo aplicada por buildOfficialGridSlots sobre esta grade.
+ */
+export function buildSaturdayGrid(day: DaySlots): string[] {
+  const hours = WORKING_HOURS_BY_WEEKDAY[day.weekdayIdx];
+  if (!hours) return [];
+  const startMin = Math.round(hours.start * 60);
+  const endMin = Math.round(hours.end * 60);
+  const base = Math.max(day.firstEventStartMin ?? startMin, startMin);
+  const grid: string[] = [];
+  for (let m = base; m < endMin; m += SATURDAY_GRID_STEP_MIN) {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    grid.push(`${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
+  }
+  return grid;
+}
+
+export function buildOfficialGridSlots(day: DaySlots): string[] {
   if (day.closed) return [];
-  const grid = OFFICIAL_GRID_BY_WEEKDAY[day.weekdayIdx] ?? [];
+  const grid = day.weekdayIdx === SATURDAY_WEEKDAY
+    ? buildSaturdayGrid(day)
+    : (OFFICIAL_GRID_BY_WEEKDAY[day.weekdayIdx] ?? []);
   const freeSet = new Set(day.slots);
   return grid.filter((slot) => {
     const parts = slot.split(':');

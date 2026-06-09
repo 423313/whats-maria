@@ -45,11 +45,21 @@ export const WORKING_HOURS_BY_WEEKDAY: Record<number, { start: number; end: numb
   3: { start: 9, end: 16.5 },         // quarta
   4: { start: 9, end: 16.5 },         // quinta
   5: { start: 9, end: 16.5 },         // sexta
-  6: { start: 8, end: 12 },           // sábado
+  // sábado: fim às 13h (não 12h) para comportar um atendimento começando às 11:00
+  // (caso em que o 1º agendamento do dia é às 09:00). Sem isso, o slot das 11:00
+  // não teria janela suficiente (OFFICIAL_GRID_MIN_SLOTS) e nunca seria oferecido.
+  // O grade do sábado é dinâmico — ver buildSaturdayGrid em calendar-availability.
+  6: { start: 8, end: 13 },           // sábado
 };
 
 // Grade oficial de horários que podem ser oferecidos pra cliente.
 // Pré-filtrada pelo código antes de injetar no prompt — o modelo não decide.
+//
+// ATENÇÃO sábado (índice 6): a grade NÃO é este array fixo. O sábado usa uma
+// grade DINÂMICA gerada por buildSaturdayGrid (calendar-availability.ts): um
+// trilho de atendimentos espaçados de SATURDAY_GRID_STEP_MIN (2h), ancorado no
+// horário do PRIMEIRO agendamento do dia. O array abaixo só representa o caso
+// "sem nenhum agendamento" (trilho a partir da abertura: 08:00, 10:00).
 export const OFFICIAL_GRID_BY_WEEKDAY: Record<number, string[]> = {
   0: [],
   1: [],
@@ -57,12 +67,19 @@ export const OFFICIAL_GRID_BY_WEEKDAY: Record<number, string[]> = {
   3: ['09:00', '11:00', '13:00', '15:00'],
   4: ['09:00', '11:00', '13:00', '15:00'],
   5: ['09:00', '11:00', '13:00', '15:00'],
-  6: ['08:00', '10:00'],
+  6: ['08:00', '10:00'], // só o caso-base; sábado é dinâmico (ver buildSaturdayGrid)
 };
 
 // Janela mínima (em slots de 30 min) exigida para um horário aparecer na grade.
 // 3 slots = 90 min — cobre alongamento, manutenção encapsulada e os demais serviços.
 export const OFFICIAL_GRID_MIN_SLOTS = 3;
+
+// ── Sábado: grade dinâmica ──
+// Índice do dia de sábado (0=domingo..6=sábado).
+export const SATURDAY_WEEKDAY = 6;
+// Espaçamento entre atendimentos no trilho do sábado, em minutos (2 horas).
+// Ex.: 1º agendamento às 09:00 → trilho 09:00, 11:00, 13:00...
+export const SATURDAY_GRID_STEP_MIN = 120;
 
 // Localização do studio — usada pelo token [LOCALIZACAO] (pin nativo do WhatsApp)
 // e pelo link do Google Maps. As coordenadas são nível de rua (Rua México,

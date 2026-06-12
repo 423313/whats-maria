@@ -219,6 +219,7 @@ Esses tokens são detectados no texto retornado pelo agente e têm comportamento
 | `[TABELA_PRECOS]` | Removido do texto + envia imagem de preços via `sendMedia` |
 | `[CARDS_CURSO]` | Removido do texto + envia 8 imagens do curso |
 | `[ESCALAR_MARIANA:motivo]` | Removido do texto (notificação desabilitada no momento) |
+| `[SEM_RESPOSTA]` | Silêncio intencional: se QUALQUER mensagem da resposta contém o token, `flushSession` aborta o envio (nada é enviado, buffer marcado processado). Usado pela Flora para não responder repetições de cortesia de fechamento ("ok/obrigada" após já ter se despedido) e reações. Evita o loop de "imagina, qualquer coisa me chama". |
 | `--- SOLICITAÇÃO DE AGENDAMENTO ---...---` | Removido do texto + cria `pending_action` + notifica Mariana via WhatsApp |
 | `--- LEAD DE CURSO ---...---` | Idem para leads de curso |
 

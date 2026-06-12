@@ -649,6 +649,17 @@ async function flushSession(sessionId: string): Promise<void> {
     mensagens = ['oi, tive um probleminha agora pra te responder, me dá um instante que já volto'];
   }
 
+  // ─── Silêncio intencional ([SEM_RESPOSTA]) ───────────────────────────────────
+  // O agente pode decidir NÃO responder: quando a cliente apenas repete uma cortesia
+  // de fechamento que já foi encerrada ("ok", "obrigada", "valeu") ou reage a uma
+  // mensagem. Nesses casos ele emite [SEM_RESPOSTA] e nada é enviado — corta o
+  // pingue-pongue de "imagina, qualquer coisa me chama" a cada agradecimento.
+  // O buffer já foi reivindicado (claimPendingBuffer), então não há reprocessamento.
+  if (mensagens.some((m) => m.includes('[SEM_RESPOSTA]'))) {
+    logger.info({ session_id: sessionId }, 'agente optou por não responder ([SEM_RESPOSTA])');
+    return;
+  }
+
   const TABELA_PRECOS_URL = 'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/precos.jpeg';
   const TABELA_TOKEN = '[TABELA_PRECOS]';
 

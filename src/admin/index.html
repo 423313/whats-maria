@@ -97,6 +97,30 @@
   .msg-wrapper.user { align-items: flex-start; }
   .msg-wrapper.assistant { align-items: flex-end; }
   .chat-empty { text-align: center; color: #ccc; padding: 60px 32px; font-size: 14px; }
+  .msg.assistant.from-admin { background: #0b6b4f; }
+
+  /* COMPOSITOR */
+  .chat-compose { display: flex; gap: 10px; align-items: flex-end; padding: 14px 32px; border-top: 1px solid #e0d8d0; background: #fff; }
+  .chat-compose textarea {
+    flex: 1; resize: none; max-height: 120px; padding: 10px 14px; border: 1px solid #e0d8d0;
+    border-radius: 10px; font-size: 14px; font-family: inherit; line-height: 1.5; outline: none;
+  }
+  .chat-compose textarea:focus { border-color: #8b1a2e; }
+  .compose-send {
+    padding: 10px 24px; background: #8b1a2e; color: #fff; border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .compose-send:hover { background: #a01f35; }
+  .compose-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* BROADCAST VIEW */
+  #broadcast-view { display: none; flex-direction: column; flex: 1; padding: 32px; overflow-y: auto; }
+  .bc-warn { background: #fff7e6; border-left: 3px solid #d99100; padding: 10px 14px; border-radius: 0 8px 8px 0; font-size: 13px; color: #7a5b00; margin-bottom: 16px; }
+  .bc-recipients { border: 1px solid #e0d8d0; border-radius: 8px; max-height: 320px; overflow-y: auto; margin: 12px 0; }
+  .bc-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #f0e9e2; font-size: 13px; cursor: pointer; }
+  .bc-item:last-child { border-bottom: none; }
+  .bc-item:hover { background: #fdf0f2; }
+  .bc-item input { width: 16px; height: 16px; accent-color: #8b1a2e; }
 
   /* PROMPT VIEW */
   #prompt-view { display: none; flex-direction: column; flex: 1; padding: 32px; }
@@ -178,6 +202,7 @@
     <div class="sidebar-nav">
       <button class="nav-btn active" onclick="showView('sessions')" id="nav-sessions">💬 Conversas</button>
       <button class="nav-btn" onclick="showView('prompt')" id="nav-prompt">✏️ Editar Prompt da FLORA</button>
+<button class="nav-btn" onclick="showView('broadcast')" id="nav-broadcast">📢 Disparo em massa</button>
 <button class="nav-btn" onclick="showView('reviews')" id="nav-reviews">📊 Revisões Semanais</button>
       <button class="nav-btn" onclick="showView('metrics')" id="nav-metrics">📈 Métricas</button>
     </div>
@@ -210,9 +235,35 @@
         <button class="pause-btn" id="pause-btn" onclick="togglePause()">—</button>
       </div>
       <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-compose" id="chat-compose">
+        <textarea id="compose-input" rows="1" placeholder="Escreva uma mensagem para a cliente..."></textarea>
+        <button class="compose-send" id="compose-send" onclick="sendAdminMessage()">Enviar</button>
+      </div>
     </div>
 
-<div id="reviews-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto;">
+<div id="broadcast-view">
+      <h2 style="font-size:18px; font-weight:700; margin-bottom:8px;">📢 Disparo em massa</h2>
+      <p style="font-size:13px; color:#888; margin-bottom:16px;">Envie a mesma mensagem para várias clientes de uma vez. As mensagens saem com pausa entre cada envio.</p>
+      <div class="bc-warn">⚠️ Use com critério. Disparos em massa de conteúdo irrelevante podem fazer o WhatsApp bloquear a instância. Envie só mensagens úteis e esperadas pelas clientes.</div>
+
+      <textarea id="bc-input" rows="4" placeholder="Escreva a mensagem que será enviada para as clientes selecionadas..."
+        style="width:100%; padding:12px 14px; border:1px solid #e0d8d0; border-radius:10px; font-size:14px; font-family:inherit; line-height:1.5; outline:none; resize:vertical;"></textarea>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:16px;">
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+          <input type="checkbox" id="bc-select-all" onclick="toggleSelectAllBroadcast()" style="width:16px; height:16px; accent-color:#8b1a2e;" />
+          Selecionar todas
+        </label>
+        <span id="bc-count" style="font-size:12px; color:#888;">0 selecionadas</span>
+      </div>
+
+      <div class="bc-recipients" id="bc-recipients"></div>
+
+      <button class="btn-save" id="bc-send-btn" onclick="sendBroadcast()" style="align-self:flex-start;">Enviar mensagem</button>
+      <div id="bc-status" style="font-size:13px; margin-top:12px;"></div>
+    </div>
+
+    <div id="reviews-view" style="display:none; flex-direction:column; flex:1; padding:32px; overflow-y:auto;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
         <h2 style="font-size:18px; font-weight:700;">📊 Revisões Semanais</h2>
         <button class="btn-save" onclick="runManualReview()" id="run-review-btn" style="padding:8px 20px; font-size:13px;">▶ Rodar agora</button>
@@ -432,9 +483,14 @@
       const wrapper = document.createElement('div');
       wrapper.className = `msg-wrapper ${msg.role}`;
       const time = new Date(msg.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+      const fromAdmin = msg.role === 'assistant' && msg.metadata?.sender === 'Admin (painel)';
+      let label;
+      if (msg.role === 'user') label = '👤 Cliente';
+      else if (fromAdmin) label = '👩‍💼 Você (painel)';
+      else label = '🤖 Maria';
       wrapper.innerHTML = `
-        <div class="msg ${msg.role}">${escapeHtml(msg.content)}</div>
-        <div class="msg-time">${msg.role === 'user' ? '👤 Cliente' : '🤖 Maria'} · ${time}</div>`;
+        <div class="msg ${msg.role}${fromAdmin ? ' from-admin' : ''}">${escapeHtml(msg.content)}</div>
+        <div class="msg-time">${label} · ${time}</div>`;
       container.appendChild(wrapper);
     }
     container.scrollTop = container.scrollHeight;
@@ -471,6 +527,119 @@
         badge.className = newPaused ? 'badge-paused' : 'badge-active';
         badge.textContent = newPaused ? 'PAUSADA' : 'ATIVA';
       }
+    }
+  }
+
+  // ---- ENVIO MANUAL (compositor) ----
+  async function sendAdminMessage() {
+    if (!currentSession) return;
+    const input = document.getElementById('compose-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    const btn = document.getElementById('compose-send');
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/admin/sessions/${encodeURIComponent(currentSession)}/send-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        alert('Erro ao enviar: ' + (data.error || res.status));
+        return;
+      }
+      input.value = '';
+      input.style.height = 'auto';
+      const s = sessions.find(x => x.session_id === currentSession);
+      if (s) await openSession(s);
+    } catch (e) {
+      alert('Falha de rede ao enviar a mensagem.');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Enter envia, Shift+Enter quebra linha; textarea cresce com o conteúdo
+  document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('compose-input');
+    if (!input) return;
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendAdminMessage();
+      }
+    });
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    });
+  });
+
+  // ---- BROADCAST (disparo em massa) ----
+  async function renderBroadcastRecipients() {
+    const container = document.getElementById('bc-recipients');
+    if (!sessions.length) await loadSessions();
+    if (!sessions.length) {
+      container.innerHTML = '<div style="padding:14px; color:#888; font-size:13px;">Nenhuma conversa ainda.</div>';
+      return;
+    }
+    container.innerHTML = '';
+    for (const s of sessions) {
+      const item = document.createElement('label');
+      item.className = 'bc-item';
+      item.innerHTML = `
+        <input type="checkbox" class="bc-check" value="${s.session_id}" onchange="updateBroadcastCount()" />
+        <span>${formatPhone(s.phone)}</span>`;
+      container.appendChild(item);
+    }
+    document.getElementById('bc-select-all').checked = false;
+    updateBroadcastCount();
+  }
+
+  function toggleSelectAllBroadcast() {
+    const all = document.getElementById('bc-select-all').checked;
+    document.querySelectorAll('.bc-check').forEach(c => { c.checked = all; });
+    updateBroadcastCount();
+  }
+
+  function updateBroadcastCount() {
+    const n = document.querySelectorAll('.bc-check:checked').length;
+    document.getElementById('bc-count').textContent = `${n} selecionada${n === 1 ? '' : 's'}`;
+  }
+
+  async function sendBroadcast() {
+    const text = document.getElementById('bc-input').value.trim();
+    const selected = [...document.querySelectorAll('.bc-check:checked')].map(c => c.value);
+    if (!text) { alert('Escreva a mensagem.'); return; }
+    if (!selected.length) { alert('Selecione ao menos uma cliente.'); return; }
+    if (!confirm(`Enviar esta mensagem para ${selected.length} cliente(s)?`)) return;
+
+    const btn = document.getElementById('bc-send-btn');
+    const status = document.getElementById('bc-status');
+    btn.disabled = true;
+    status.textContent = 'Iniciando disparo...';
+    try {
+      const res = await fetch('/admin/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sessionIds: selected, text }),
+      });
+      const data = await res.json();
+      if (res.status === 202 && data.ok) {
+        status.style.color = '#0b6b4f';
+        status.textContent = `✓ Disparo iniciado para ${data.total} cliente(s). As mensagens são enviadas com pausa entre cada uma.`;
+        document.getElementById('bc-input').value = '';
+      } else {
+        status.style.color = '#c0392b';
+        status.textContent = 'Erro: ' + (data.error || res.status);
+      }
+    } catch (e) {
+      status.style.color = '#c0392b';
+      status.textContent = 'Falha de rede ao iniciar o disparo.';
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -722,6 +891,16 @@ document.getElementById('reviews-view').style.display = view === 'reviews' ? 'fl
       document.getElementById('main-title').textContent = 'Métricas';
       document.getElementById('main-sub').textContent = 'Visão geral do desempenho do atendimento';
       loadMetrics();
+    }
+
+    document.getElementById('broadcast-view').style.display = view === 'broadcast' ? 'flex' : 'none';
+    document.getElementById('nav-broadcast').classList.toggle('active', view === 'broadcast');
+    if (view === 'broadcast') {
+      document.getElementById('empty-view').style.display = 'none';
+      document.getElementById('chat-view').style.display = 'none';
+      document.getElementById('main-title').textContent = 'Disparo em massa';
+      document.getElementById('main-sub').textContent = 'Envie uma mensagem para várias clientes';
+      renderBroadcastRecipients();
     }
   }
 

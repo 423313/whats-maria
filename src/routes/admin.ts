@@ -11,6 +11,39 @@ import {
   buildAvailabilityContext,
   invalidateAvailabilityCache,
 } from '../services/calendar-availability.js';
+import { getEvolutionClient } from '../lib/evolution.js';
+import { registerFloraEcho } from '../lib/echo-registry.js';
+import { persistAssistantMessage } from '../services/chat-repository.js';
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Envia uma mensagem manual (escrita pelo admin no painel) para uma cliente.
+ *
+ * CRÍTICO: registra o ID no echo-registry ANTES de qualquer await posterior.
+ * A Evolution dispara webhook fromMe=true para esta mensagem; sem o registro,
+ * o sistema a interpretaria como mensagem manual da Mariana e ativaria a janela
+ * de 24h, silenciando a Flora. Aqui a decisão é NÃO silenciar — então o eco é
+ * obrigatório. Persistir como role 'assistant' dá a 2ª camada (fallback por
+ * conteúdo em resolveIsFloraEcho).
+ */
+async function sendManualMessage(sessionId: string, text: string): Promise<string | null> {
+  const evo = getEvolutionClient();
+  const result = await evo.sendText(env.EVOLUTION_INSTANCE, sessionId, text);
+  if (result.messageId) {
+    registerFloraEcho(result.messageId);
+  }
+  await persistAssistantMessage({
+    sessionId,
+    instance: env.EVOLUTION_INSTANCE,
+    role: 'assistant',
+    content: text,
+    status: 'sent',
+    evolutionMessageId: result.messageId ?? null,
+    pushName: 'Admin (painel)',
+  });
+  return result.messageId ?? null;
+}
 
 // Tokens críticos que NÃO podem ser removidos sem confirmação explícita.
 // Se um save remove qualquer um deles, a UI mostra warning antes de aplicar.
@@ -136,7 +169,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
     const { data, error } = await supabase
       .from('chat_messages')
-      .select('id, role, content, created_at')
+      .select('id, role, content, created_at, metadata')
       .eq('session_id', decoded)
       .order('created_at', { ascending: true });
 
@@ -164,6 +197,61 @@ export async function adminRoutes(app: FastifyInstance) {
 
     if (error) return reply.status(500).send({ error: error.message });
     return reply.send({ ok: true });
+  });
+
+  // Envia uma mensagem manual do admin direto para uma cliente (não silencia a Flora)
+  app.post('/admin/sessions/:sessionId/send-message', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+
+    const { sessionId } = req.params as { sessionId: string };
+    const decoded = decodeURIComponent(sessionId);
+    const { text } = req.body as { text?: string };
+
+    const trimmed = text?.trim();
+    if (!trimmed) return reply.status(400).send({ error: 'Mensagem vazia' });
+
+    try {
+      const messageId = await sendManualMessage(decoded, trimmed);
+      return reply.send({ ok: true, messageId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn({ err: message, session_id: decoded }, 'admin send-message failed');
+      return reply.status(500).send({ error: message });
+    }
+  });
+
+  // Disparo em massa: mesma mensagem para várias clientes (processa em background)
+  app.post('/admin/broadcast', async (req, reply) => {
+    if (!checkAuth(req as any)) return reply.status(401).send({ error: 'Não autorizado' });
+
+    const { sessionIds, text } = req.body as { sessionIds?: string[]; text?: string };
+    const trimmed = text?.trim();
+
+    if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+      return reply.status(400).send({ error: 'Nenhuma cliente selecionada' });
+    }
+    if (!trimmed) return reply.status(400).send({ error: 'Mensagem vazia' });
+
+    // Processa em background para não estourar o timeout do request com muitas clientes.
+    // Pausa entre envios para não derrubar a instância do WhatsApp; uma falha não aborta as demais.
+    void (async () => {
+      let sent = 0;
+      let failed = 0;
+      for (const sessionId of sessionIds) {
+        try {
+          await sendManualMessage(sessionId, trimmed);
+          sent++;
+        } catch (err) {
+          failed++;
+          const message = err instanceof Error ? err.message : String(err);
+          logger.warn({ err: message, session_id: sessionId }, 'admin broadcast send failed');
+        }
+        await delay(1500);
+      }
+      logger.info({ total: sessionIds.length, sent, failed }, 'admin broadcast finished');
+    })();
+
+    return reply.status(202).send({ ok: true, total: sessionIds.length });
   });
 
   // Busca o prompt atual

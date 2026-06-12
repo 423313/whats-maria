@@ -184,11 +184,12 @@ Webhook POST /webhooks/evolution
 
 Problema: a Evolution dispara `fromMe=true` para CADA mensagem que a Flora envia. Sem distinguir, o sistema ativaria a janela da Mariana nas próprias respostas da Flora.
 
-Solução em duas camadas:
-1. **In-memory** (`echo-registry.ts`): registra o `messageId` retornado por `sendText`/`sendMedia` por 90s. `isFloraEcho(id)` consulta esse registry.
-2. **Fallback via DB** (`hasRecentPendingFloraReply`): consulta `chat_messages` por mensagens `assistant` com status `pending`/`sent` nos últimos 90s para a sessão.
+Solução em `resolveIsFloraEcho(sessionId, messageId, text)` (chat-repository), com hierarquia de sinais:
+1. **In-memory** (`echo-registry.ts`): registra o `messageId` retornado por `sendText`/`sendMedia`/`sendLocation` por `PENDING_ECHO_WINDOW_MS` (12 min, cobre o lookback do mariana-monitor). `isFloraEcho(id)` é o sinal FORTE e exato.
+2. **Fallback por CONTEÚDO** (`hasRecentFloraReplyWithContent`): se o id não está no registry mas há texto, compara o conteúdo com respostas recentes da Flora. Eco tem texto idêntico ao enviado; mensagem manual da Mariana tem texto novo → não é eco → ativa a janela.
+3. **Sem texto e sem id no registry** (mídia): não é eco (mídia manual da Mariana; o eco de mídia da própria Flora sempre tem id no registry).
 
-Ambas as camadas são verificadas antes de ativar a janela da Mariana.
+**IMPORTANTE:** NÃO usar mais "existe qualquer resposta recente da Flora" (`hasRecentPendingFloraReply`, sinal fraco) para suprimir a ativação da janela — isso mascarava mensagens manuais da Mariana sempre que a Flora tinha respondido nos últimos minutos, fazendo a Flora atropelar o atendimento manual (bug corrigido). O guard é aplicado nos 3 pontos do webhook (kill-switch global, `messages.update`, `handleOutgoingMessage`); o kill-switch ignora status puro (ACK/READ).
 
 ---
 

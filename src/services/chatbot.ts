@@ -26,7 +26,7 @@ import {
   markAssistantSent,
   markAssistantFailed,
   ensureChatControl,
-  hasRecentPendingFloraReply,
+  resolveIsFloraEcho,
   isAIPaused,
   saveClientNameIfMissing,
   saveClientName,
@@ -126,13 +126,21 @@ export async function handleEvolutionWebhook(
 
     // Ativa janela imediatamente, antes de qualquer filtragem de evento.
     // Belt-and-suspenders + protege contra eventos com nomes inesperados.
-    if (detectedJid.endsWith('@s.whatsapp.net')) {
+    // NÃO ativa em status puro (DELIVERY_ACK/READ/etc): esses updates fromMe não têm
+    // conteúdo e não representam uma mensagem manual — só confirmações de entrega.
+    const isStatusOnly = !!data.status && IGNORED_STATUSES.has(data.status);
+    if (detectedJid.endsWith('@s.whatsapp.net') && !isStatusOnly) {
       const earlySessionId = phoneToSessionId(detectedJid.replace('@s.whatsapp.net', ''));
       try {
-        // Verifica primeiro pelo ID exato (registry in-memory, sem race condition)
-        // e usa DB como fallback para o caso onde messageId não estava disponível.
+        // ID exato no registry (sinal forte) OU conteúdo idêntico a uma resposta recente
+        // da Flora (fallback). Mensagem manual da Mariana tem texto novo → não é eco.
         const incomingId = data.key?.id;
-        const isEcho = isFloraEcho(incomingId) || await hasRecentPendingFloraReply(earlySessionId);
+        const { messageType: kmType, message: kmMsg } = unwrapEphemeral(
+          data.messageType ?? '',
+          data.message ?? {},
+        );
+        const kText = extractText(kmType, kmMsg);
+        const isEcho = await resolveIsFloraEcho(earlySessionId, incomingId, kText);
         if (isEcho) {
           logger.info(
             { session_id: earlySessionId, event, matched_id: incomingId },
@@ -160,10 +168,17 @@ export async function handleEvolutionWebhook(
       if (updateJid.endsWith('@s.whatsapp.net')) {
         const updateSessionId = phoneToSessionId(updateJid.replace('@s.whatsapp.net', ''));
         const updateMsgId = data.key?.id;
-        void (isFloraEcho(updateMsgId)
-          ? Promise.resolve(true)
-          : hasRecentPendingFloraReply(updateSessionId)
-        ).then(async (isEcho) => {
+        // Texto do conteúdo editado (se houver). Status puros (ACK/READ) não têm
+        // conteúdo → não mexem na janela. Edição de texto com conteúdo novo, sim.
+        const editedInner = (data.editedMessage?.message ?? {}) as Record<string, unknown>;
+        let updText: string | null = null;
+        if (typeof editedInner.conversation === 'string') {
+          updText = editedInner.conversation;
+        } else {
+          const etm = editedInner.extendedTextMessage as { text?: unknown } | undefined;
+          if (typeof etm?.text === 'string') updText = etm.text;
+        }
+        void resolveIsFloraEcho(updateSessionId, updateMsgId, updText).then(async (isEcho) => {
           if (isEcho) {
             logger.info(
               { session_id: updateSessionId, matched_id: updateMsgId },
@@ -171,6 +186,8 @@ export async function handleEvolutionWebhook(
             );
             return;
           }
+          // Só ativa quando há conteúdo real (evita ativar a janela em status puro).
+          if (!updText) return;
           // Garante linha em chat_control antes do UPDATE (vide nota em handleOutgoingMessage)
           await ensureChatControl(updateSessionId, instance, DEFAULT_AGENT_TYPE);
           await updateMarianaManualAt(updateSessionId);
@@ -305,12 +322,22 @@ async function handleOutgoingMessage(
   // existiria e o UPDATE afetaria 0 linhas, deixando a janela inativa.
   await ensureChatControl(sessionId, instance, DEFAULT_AGENT_TYPE);
   const incomingMessageId = data.key?.id ?? null;
-  // Sinal FORTE: o messageId está no echo-registry → é comprovadamente um envio da
-  // própria Flora. Sinal FRACO (fallback via DB): há resposta pending recente da Flora.
-  // O fallback fraco serve só pra NÃO ativar a janela, mas NÃO é confiável o
-  // suficiente pra "promover" mensagem por conteúdo (ver passo 6).
+
+  // Extrai o conteúdo ANTES de decidir o eco — o texto é o que permite distinguir o
+  // eco da própria Flora (conteúdo idêntico ao que ela enviou) de uma mensagem
+  // manual da Mariana (texto novo). Sem isso, qualquer fromMe logo após a Flora
+  // responder era tratado como eco e a janela de 24h não ativava (a Flora então
+  // atropelava o atendimento manual da Mariana).
+  const { messageType, message } = unwrapEphemeral(
+    data.messageType ?? '',
+    data.message ?? {},
+  );
+  const text = extractText(messageType, message);
+
+  // Sinal FORTE: messageId no echo-registry → envio comprovado da Flora.
+  // Fallback por CONTEÚDO: texto idêntico a uma resposta recente da Flora.
   const isEchoById = isFloraEcho(incomingMessageId);
-  const isEchoFromFlora = isEchoById || await hasRecentPendingFloraReply(sessionId);
+  const isEchoFromFlora = await resolveIsFloraEcho(sessionId, incomingMessageId, text);
   if (!isEchoFromFlora) {
     await updateMarianaManualAt(sessionId);
   } else {
@@ -335,13 +362,6 @@ async function handleOutgoingMessage(
   if (existing) {
     return { status: 'ignored', reason: 'from_me_already_persisted' };
   }
-
-  // ─── 5. Extrai texto (para mensagens manuais de texto da Mariana) ────────────
-  const { messageType, message } = unwrapEphemeral(
-    data.messageType ?? '',
-    data.message ?? {},
-  );
-  const text = extractText(messageType, message);
 
   // ─── 5b. Mídia (áudio/imagem/vídeo/sticker) enviada pela Mariana ────────────
   // Janela de 24h já foi ativada no passo 2. Aqui processamos a mídia para

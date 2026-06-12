@@ -8,7 +8,7 @@
 
 import { supabase } from '../lib/supabase.js';
 import { logger } from '../lib/logger.js';
-import { PENDING_ECHO_WINDOW_MS } from '../lib/echo-registry.js';
+import { PENDING_ECHO_WINDOW_MS, isFloraEcho } from '../lib/echo-registry.js';
 
 export interface PersistMessageInput {
   sessionId: string;
@@ -154,6 +154,60 @@ export async function hasRecentPendingFloraReply(sessionId: string): Promise<boo
     return false;
   }
   return !!data;
+}
+
+/**
+ * Fallback por CONTEÚDO: retorna true se a Flora enviou recentemente uma resposta
+ * com EXATAMENTE este texto. Usado para distinguir o eco da própria Flora (texto
+ * idêntico ao enviado) de uma mensagem manual da Mariana (texto novo).
+ */
+export async function hasRecentFloraReplyWithContent(
+  sessionId: string,
+  content: string,
+): Promise<boolean> {
+  const cutoff = new Date(Date.now() - PENDING_ECHO_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('id')
+    .eq('session_id', sessionId)
+    .eq('role', 'assistant')
+    .in('status', ['pending', 'sent'])
+    .eq('content', content)
+    .gte('created_at', cutoff)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.warn(
+      { err: error.message, session_id: sessionId },
+      'hasRecentFloraReplyWithContent query failed',
+    );
+    return false;
+  }
+  return !!data;
+}
+
+/**
+ * Decide se um webhook fromMe é ECO da própria Flora (e, portanto, NÃO deve ativar
+ * a janela manual da Mariana). Hierarquia de sinais:
+ *   1. messageId no echo-registry in-memory → eco (sinal forte e exato).
+ *   2. Há texto? compara o CONTEÚDO com respostas recentes da Flora — eco tem texto
+ *      idêntico ao enviado; mensagem manual da Mariana tem texto novo → não é eco.
+ *   3. Sem texto (mídia) e sem id no registry → NÃO é eco (mídia manual da Mariana;
+ *      o eco de mídia da própria Flora sempre tem id no registry via registerFloraEcho).
+ *
+ * NÃO usamos mais "existe qualquer resposta recente da Flora" como prova de eco: esse
+ * sinal fraco mascarava mensagens manuais da Mariana sempre que a Flora tinha respondido
+ * nos últimos minutos, fazendo a Flora atropelar o atendimento manual (bug real).
+ */
+export async function resolveIsFloraEcho(
+  sessionId: string,
+  messageId: string | null | undefined,
+  text: string | null,
+): Promise<boolean> {
+  if (isFloraEcho(messageId)) return true;
+  const trimmed = text?.trim();
+  if (trimmed) return hasRecentFloraReplyWithContent(sessionId, trimmed);
+  return false;
 }
 
 export async function isAIPaused(sessionId: string): Promise<boolean> {

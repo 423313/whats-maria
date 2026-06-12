@@ -249,11 +249,22 @@
       <textarea id="bc-input" rows="4" placeholder="Escreva a mensagem que será enviada para as clientes selecionadas..."
         style="width:100%; padding:12px 14px; border:1px solid #e0d8d0; border-radius:10px; font-size:14px; font-family:inherit; line-height:1.5; outline:none; resize:vertical;"></textarea>
 
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:16px;">
-        <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
-          <input type="checkbox" id="bc-select-all" onclick="toggleSelectAllBroadcast()" style="width:16px; height:16px; accent-color:#8b1a2e;" />
-          Selecionar todas
-        </label>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:16px; gap:16px;">
+        <div style="display:flex; align-items:center; gap:16px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+            <input type="checkbox" id="bc-select-all" onclick="toggleSelectAllBroadcast()" style="width:16px; height:16px; accent-color:#8b1a2e;" />
+            Selecionar todas
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#555;">
+            Filtrar:
+            <select id="bc-filter" onchange="renderBroadcastRecipients()"
+              style="padding:6px 10px; border:1px solid #e0d8d0; border-radius:8px; font-size:13px; font-family:inherit; outline:none; cursor:pointer;">
+              <option value="all">Todas</option>
+              <option value="curso">Curso (alunas/interessadas)</option>
+              <option value="promocao">Promoção</option>
+            </select>
+          </label>
+        </div>
         <span id="bc-count" style="font-size:12px; color:#888;">0 selecionadas</span>
       </div>
 
@@ -578,6 +589,11 @@
   });
 
   // ---- BROADCAST (disparo em massa) ----
+  const CATEGORY_BADGES = {
+    curso: { label: 'Curso', color: '#0b6b4f' },
+    promocao: { label: 'Promoção', color: '#b8860b' },
+  };
+
   async function renderBroadcastRecipients() {
     const container = document.getElementById('bc-recipients');
     if (!sessions.length) await loadSessions();
@@ -585,13 +601,31 @@
       container.innerHTML = '<div style="padding:14px; color:#888; font-size:13px;">Nenhuma conversa ainda.</div>';
       return;
     }
+
+    const filter = document.getElementById('bc-filter').value;
+    const visible = sessions.filter(s =>
+      filter === 'all' || (s.categories || []).includes(filter)
+    );
+
     container.innerHTML = '';
-    for (const s of sessions) {
+    if (!visible.length) {
+      container.innerHTML = '<div style="padding:14px; color:#888; font-size:13px;">Nenhuma cliente nesta categoria.</div>';
+      document.getElementById('bc-select-all').checked = false;
+      updateBroadcastCount();
+      return;
+    }
+
+    for (const s of visible) {
       const item = document.createElement('label');
       item.className = 'bc-item';
+      const badges = (s.categories || [])
+        .map(c => CATEGORY_BADGES[c])
+        .filter(Boolean)
+        .map(b => `<span style="background:${b.color}; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:20px; margin-left:6px;">${b.label}</span>`)
+        .join('');
       item.innerHTML = `
         <input type="checkbox" class="bc-check" value="${s.session_id}" onchange="updateBroadcastCount()" />
-        <span>${formatPhone(s.phone)}</span>`;
+        <span>${formatPhone(s.phone)}</span>${badges}`;
       container.appendChild(item);
     }
     document.getElementById('bc-select-all').checked = false;

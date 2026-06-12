@@ -17,6 +17,11 @@ import { persistAssistantMessage } from '../services/chat-repository.js';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Detecta menção a promoção nas mensagens da cliente (categoria derivada para o
+// filtro de disparo em massa). Não há dado estruturado de "promoção"; inferimos
+// pelo que a cliente escreveu.
+const PROMO_REGEX = /promo(?:ç|c)(?:ã|a)o|\bpromo\b|\bpromos\b|desconto|\boferta|cupom/i;
+
 /**
  * Envia uma mensagem manual (escrita pelo admin no painel) para uma cliente.
  *
@@ -121,41 +126,71 @@ export async function adminRoutes(app: FastifyInstance) {
 
     if (error) return reply.status(500).send({ error: error.message });
 
-    // Agrupa por sessão e pega última mensagem + contagem
+    // Agrupa por sessão e pega última mensagem + contagem. Também marca se a
+    // cliente mencionou promoção em alguma mensagem (categoria derivada).
     const sessionsMap = new Map<string, {
       session_id: string;
       last_message: string;
       last_at: string;
       total: number;
+      mentioned_promo: boolean;
     }>();
 
     for (const msg of (data ?? [])) {
-      if (!sessionsMap.has(msg.session_id)) {
+      const existing = sessionsMap.get(msg.session_id);
+      const isPromo = msg.role === 'user' && PROMO_REGEX.test(msg.content ?? '');
+      if (!existing) {
         sessionsMap.set(msg.session_id, {
           session_id: msg.session_id,
           last_message: msg.content,
           last_at: msg.created_at,
           total: 1,
+          mentioned_promo: isPromo,
         });
       } else {
-        sessionsMap.get(msg.session_id)!.total++;
+        existing.total++;
+        if (isPromo) existing.mentioned_promo = true;
       }
     }
 
-    // Busca status de pausa de cada sessão
+    // Busca status de pausa + contexto de cada sessão
     const sessionIds = [...sessionsMap.keys()];
     const { data: controls } = await supabase
       .from('chat_control')
-      .select('session_id, ai_paused')
+      .select('session_id, ai_paused, followup_context')
       .in('session_id', sessionIds);
 
     const pauseMap = new Map((controls ?? []).map((c: any) => [c.session_id, c.ai_paused]));
+    const contextMap = new Map((controls ?? []).map((c: any) => [c.session_id, c.followup_context]));
 
-    const sessions = [...sessionsMap.values()].map((s) => ({
-      ...s,
-      ai_paused: pauseMap.get(s.session_id) ?? false,
-      phone: s.session_id.replace('@s.whatsapp.net', ''),
-    }));
+    // Leads/alunas de curso registrados (status não-recusado)
+    const { data: cursoActions } = await supabase
+      .from('pending_actions')
+      .select('session_id, status')
+      .eq('type', 'curso')
+      .neq('status', 'recusado')
+      .in('session_id', sessionIds);
+
+    const cursoSet = new Set((cursoActions ?? []).map((a: any) => a.session_id));
+
+    const sessions = [...sessionsMap.values()].map((s) => {
+      // Curso = lead registrado OU contexto da conversa marcado como 'course'.
+      const isCurso = cursoSet.has(s.session_id) || contextMap.get(s.session_id) === 'course';
+      // Promoção = mencionou promoção E não é de curso (promoção de serviços).
+      const isPromo = s.mentioned_promo && !isCurso;
+      const categories: string[] = [];
+      if (isCurso) categories.push('curso');
+      if (isPromo) categories.push('promocao');
+      return {
+        session_id: s.session_id,
+        last_message: s.last_message,
+        last_at: s.last_at,
+        total: s.total,
+        ai_paused: pauseMap.get(s.session_id) ?? false,
+        phone: s.session_id.replace('@s.whatsapp.net', ''),
+        categories,
+      };
+    });
 
     return reply.send(sessions);
   });

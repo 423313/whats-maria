@@ -26,7 +26,9 @@ import {
 
 // ───── configuração de janela e horário ─────
 
-const DAYS_AHEAD = 14;
+// Horizonte da agenda exposto à Flora. O bloco injetado informa dinamicamente o
+// período coberto (de/até) para o agente distinguir "lotada" de "ainda não aberta".
+const DAYS_AHEAD = 30;
 const SLOT_MINUTES = 30;
 const TIMEZONE = 'America/Sao_Paulo';
 
@@ -324,6 +326,13 @@ function spParts(d: Date): { year: number; month1: number; day: number; weekdayI
 // ───── formatação do texto injetado no prompt ─────
 
 function formatContext(daySlots: DaySlots[]): string {
+  // Horizonte coberto pelo bloco (primeira e última data da janela de DAYS_AHEAD).
+  // Crucial para o agente distinguir "dia lotado" (dentro da janela, sem slots) de
+  // "agenda ainda não aberta" (data posterior ao fim da janela). Sem isso, o modelo
+  // tratava datas fora da janela como lotadas (bug real: pediu 09/07 e ouviu "lotada").
+  const horizonStart = daySlots[0]?.dateLabel ?? '';
+  const horizonEnd = daySlots[daySlots.length - 1]?.dateLabel ?? '';
+
   // ─── BLOCO 1: GRADE OFICIAL (fonte da verdade pro que oferecer) ───
   const gridHeader =
     `[GRADE OFICIAL DA MARIANA — horários disponíveis para oferecer]\n` +
@@ -331,6 +340,10 @@ function formatContext(daySlots: DaySlots[]): string {
     `Já vem PRÉ-FILTRADA pelo sistema cruzando a grade oficial com o Calendar.\n` +
     `Cada linha = horários da grade oficial LIVRES naquele dia.\n` +
     `NUNCA ofereça um horário que não está LISTADO LITERALMENTE aqui.\n` +
+    `PERÍODO COBERTO: de ${horizonStart} até ${horizonEnd} (próximos ${DAYS_AHEAD} dias).\n` +
+    `Se a cliente pedir uma data DEPOIS de ${horizonEnd}, a agenda ainda NÃO está aberta ` +
+    `pra esse período: NÃO diga que está lotada — diga que ainda não abriu e ofereça uma ` +
+    `data dentro do período coberto (ou repassar pra Mariana confirmar quando abrir).\n` +
     `\n`;
 
   const gridLines: string[] = [];

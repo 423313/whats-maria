@@ -238,6 +238,7 @@ URLs das imagens hospedadas no Supabase Storage:
 - Grade oficial oferecida: ter/qua/qui/sex 09h, 11h, 13h, 15h
 - **Sábado tem grade DINÂMICA** (`buildSaturdayGrid`): trilho de atendimentos de 2 em 2h alinhado à PARIDADE do 1º agendamento do dia (offset de 2h a partir da abertura), começando sempre na abertura. 1º às 08h → trilho par, oferece 10h; 1º às 09h → trilho ímpar, oferece 11h (08h livre NÃO entra, manteria atendimentos a 1h); 1º às 10h → trilho par, oferece o 08h livre; sem agendamento → oferece 08h e 10h. Expediente interno do sábado vai até 13h (não 12h) só pra o slot das 11h ter janela de 90 min; o texto de status que a Flora fala continua "08h às 12h".
 - Slots de 30 min cruzados com eventos do Calendar para identificar livres
+- **Horizonte:** `DAYS_AHEAD = 30` dias. O bloco informa dinamicamente o PERÍODO COBERTO (de/até). Datas DEPOIS do fim do período não estão "lotadas" — a agenda ainda não abriu pra lá; o prompt tem o "CASO 0" pra isso (a Flora não pode mais dizer "lotada" pra uma data fora da janela — bug real: cliente pediu 09/07 e ouviu "lotada").
 - Cache: 60s em memória
 - Fallback: se Calendar indisponível, injeta mensagem pedindo para aguardar a Mariana confirmar
 - Requer: `GOOGLE_SERVICE_ACCOUNT_KEY` (JSON do service account) e `GOOGLE_CALENDAR_ID`

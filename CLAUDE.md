@@ -79,7 +79,7 @@ src/admin/index.html               # SPA do painel admin (HTML/JS vanilla)
 belasis-sync/                      # Serviço separado (Node.js) que sincroniza agenda do Belasis com Google Calendar
 docs/                              # Documentação (deploy, prompt, fixes, melhorias, saas, reference) — ver docs/README.md
 scripts/                          # Scripts utilitários (debug, maintenance, migrations, notifications, prompt, supabase)
-tests/                            # Testes Vitest (118): time, pending-block, auth-utils, buffer, echo-registry, agent-date, followup
+tests/                            # Testes Vitest (140): time, pending-block, auth-utils, buffer, echo-registry, agent-date, followup
 supabase/
 ├── migrations/                    # Migrações incrementais (.sql)
 ├── schema.sql                     # DDL das tabelas
@@ -273,9 +273,11 @@ Senha: variável `ADMIN_PASSWORD` (atualmente `studio2024`)
 Autenticação: header `Authorization: Bearer <senha>` em todas as rotas da API.
 
 Endpoints relevantes:
-- `GET /admin/sessions` — lista sessões com último contato e status de pausa
-- `GET /admin/sessions/:id/messages` — histórico de uma sessão
+- `GET /admin/sessions` — lista sessões com último contato, status de pausa e `categories` (tags derivadas: `curso`, `promocao`)
+- `GET /admin/sessions/:id/messages` — histórico de uma sessão (inclui `metadata` para distinguir mensagens manuais do admin)
 - `POST /admin/sessions/:id/pause` — pausa/retoma a Flora numa sessão
+- `POST /admin/sessions/:id/send-message` — envia mensagem manual do admin direto pra cliente (ver "Envio manual pelo painel")
+- `POST /admin/broadcast` — disparo em massa: `{ sessionIds[], text }`, processa em background com pausa de 1,5s entre envios; responde 202 na hora
 - `GET/PUT /admin/config` — lê/atualiza o system prompt
 - `GET /admin/config/history` — versões anteriores do prompt
 - `POST /admin/config/restore/:id` — reverte para uma versão anterior
@@ -286,6 +288,18 @@ Endpoints relevantes:
 - `GET /admin/reviews` — revisões semanais
 - `POST /admin/reviews/run` — dispara revisão manual
 - `POST /admin/reviews/:id/approve` — aprova e aplica sugestão de prompt ao agent_configs
+
+### Envio manual pelo painel (individual + broadcast)
+
+A Mariana/admin pode escrever e enviar mensagens direto pela conversa (compositor no rodapé) ou em massa (aba "Disparo em massa").
+
+**Não silencia a Flora (decisão de design):** diferente da mensagem manual pelo celular da Mariana, o envio pelo painel NÃO ativa a janela de 24h. Isso é garantido em `sendManualMessage` (`routes/admin.ts`): o ID retornado pelo `sendText` é registrado no echo-registry (`registerFloraEcho`) antes de qualquer await, então o webhook `fromMe=true` correspondente é reconhecido como eco e não dispara `updateMarianaManualAt`. A mensagem é persistida como `role='assistant'` com `metadata.sender='Admin (painel)'` (2ª camada: o fallback por conteúdo também reconhece como eco). No painel, essas mensagens aparecem como "👩‍💼 Você (painel)".
+
+**Broadcast** processa em background (não bloqueia o request) com pausa de 1,5s entre envios; uma falha individual não aborta as demais (log via `logger.warn`).
+
+**Filtro de categorias** na aba de disparo em massa (`categories` de `GET /admin/sessions`):
+- `curso` — sessão com lead registrado (`pending_actions` type=`curso`, status ≠ `recusado`) OU `chat_control.followup_context='course'`.
+- `promocao` — a cliente (role `user`) mencionou promoção/desconto/oferta em alguma mensagem (regex `PROMO_REGEX` em `routes/admin.ts`) E a sessão NÃO é de curso. É heurístico (não há dado estruturado de promoção).
 
 ---
 

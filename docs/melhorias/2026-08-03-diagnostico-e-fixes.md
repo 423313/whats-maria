@@ -1,0 +1,32 @@
+# Diagnóstico e bateria de fixes — 2026-08-03
+
+Sessão autônoma de ~3h (Pedro autorizou execução sem pausa e ausentou-se), disparada por um diagnóstico real dos dois sistemas do Studio Mariana Castro (CRM operacional + Flora), pedido explícito de instalar o CRM como PWA, e "vá fazendo conforme recomenda" sem revisão intermediária. Mapeamento feito por 2 agentes Explore em paralelo (um por repositório) mais um terceiro focado em PWA no lado do CRM. Este arquivo documenta só o que foi **corrigido nesta sessão** no lado da Flora; a lista completa de achados brutos (maior do que cabia em 3h) não está reproduzida aqui — o que não foi corrigido virou item de `mapeamento.md` (C6/A4 atualizados) ou fica implícito como não tocado.
+
+Todos os commits abaixo têm `npm run typecheck`, `npm test` e `npm run build` limpos antes de cada um. 4 commits, todos já com push feito pra `main` (deploy automático no Railway, autonomia já concedida no `CLAUDE.md` deste repositório).
+
+## O que foi corrigido
+
+**1. Bloco de agendamento podia vazar cru pro cliente e a pendência se perder** (achado C6, reaberto por uma porta diferente da documentada originalmente). Dois problemas empilhados:
+- A regex de fechamento do bloco (`--- SOLICITAÇÃO DE AGENDAMENTO ---...`) exigia um `\n` literal antes do fim da string testada. Saída de LLM nem sempre termina em `\n` — nesse caso o bloco não era removido (vazava cru) nem detectado (a Mariana nunca era avisada). `pending-block.ts`: fechamento tolerante (`\s*$`).
+- Mais profundo: a remoção sempre rodou por mensagem (`chatbot.ts`, iterando `mensagens[i]`), mas a detecção rodava sobre `mensagens.join('\n')`. Se o bloco vivia na 1ª de duas mensagens, no texto juntado ele deixava de estar "no fim do texto" (a 2ª mensagem vinha depois) e a detecção falhava mesmo com a remoção tendo funcionado normalmente. `handlePendingActions` agora recebe o array de mensagens inteiro e procura o bloco em cada uma separadamente (`encontrarBloco`, exportado e testado em `pending-actions.test.ts`), igual à remoção.
+- De carona: `handlePendingActions` só rodava na ÚLTIMA mensagem do loop de envio, dentro de um bloco que podia sofrer `break` antes (janela da Mariana ativando no meio, erro do Evolution numa mensagem anterior) — perdia a pendência mesmo com o bloco já gerado pelo agente. Chamada movida pra logo depois do `runAgent`, uma vez, com `.catch()` próprio.
+
+**2. Webhook sem autenticação de origem** (achado A4). `EVOLUTION_WEBHOOK_TOKEN` opcional (query `?token=`), default vazio preserva o comportamento atual — só passa a exigir depois de configurado nos dois lados (env var aqui + URL cadastrada no Manager da Evolution, que precisa ser atualizada manualmente, fora do alcance desta sessão).
+
+**3. Paginação do Google Calendar** (`calendar-availability.ts`): `fetchBusyIntervals` seguia `maxResults: 500` sem tratar `nextPageToken` — agendas com mais de 500 eventos na janela de 30 dias perdiam os excedentes da lista de ocupados (truncamento silencioso do Google, não erro) e a Flora podia oferecer horário já agendado como livre. Corrigido com loop de paginação.
+
+**4. `unhandledRejection`/`uncaughtException` derrubando o processo** (`server.ts`): o default do Node 20 pra uma rejeição de Promise não tratada é matar o processo inteiro — e havia `void algumaPromise().then(...)` sem `.catch()` em pelo menos um ponto real (`chatbot.ts`, resolução de eco em `messages.update`). Um crash aqui apaga todos os timers de debounce em memória e todo flush inflight de TODAS as sessões, não só a que causou o erro. Handlers adicionados (logam, não derrubam) + `.catch()` no `.then()` órfão.
+
+**5. Fixes pontuais de fuso e cache**:
+- `agent.ts`: dia da semana calculado com offset `-3h` hardcoded em vez do helper `saoPauloWeekday()` já existente — duas fontes de fuso diferentes no mesmo bloco de texto do prompt, que divergem se o horário de verão voltar.
+- `pending-actions.ts`: dedup diário (`new Date().toISOString().split('T')[0]`, dia UTC) e ano da validação de slot (`new Date().getFullYear()`, ano UTC) trocados por `saoPauloParts()`/`saoPauloDateStartToUtcIso()`. Dedup: das 21h de Brasília em diante o dia UTC já tinha virado, gerando `pending_action` e notificação duplicadas pra Mariana na mesma noite. Validação: um pedido de janeiro feito durante dezembro (dentro do horizonte de 30 dias) validava contra o ano ATUAL (passado) em vez do seguinte — checava o dia errado do calendário.
+- `admin.ts`: `PUT /admin/config` e `POST /admin/config/restore/:id` agora chamam `invalidateAgentConfigCache()` — sem isso a Flora respondia com o prompt antigo por até 30s depois da Mariana salvar, e ela salvava de novo achando que não tinha funcionado.
+- `logger.ts`: redact cobre `remoteJid`/`key_remoteJid`/`data_remoteJid` (telefone, vazava em todo log de `fromMe=true`) e `zombies[*].session_id` (Pino não alcança índice de array sem o path explícito). `chat-repository.ts` renomeou um log de `name` pra `client_name` (já coberto) em vez de generalizar o redact pra `name`, que colidiria com `err.name` em outros logs.
+
+## O que ficou como pendência (não tocado nesta sessão)
+
+- **Tasks 1 e 2 do plano `2026-08-02-integracao-agenda-crm.md`** (guardrail do `belasis-sync` e blindagem do eco cruzado WAHA→Flora) — já resolvidas numa sessão anterior a esta (2026-08-03, mais cedo no mesmo dia), atrás do flag `EXTERNAL_ECHO_ENABLED` ainda `off`.
+- **A10** (sweepers com SELECT amplo sem paginação) e **A11** (bloco de agenda grande no prompt, hoje 30 dias) seguem abertos — A11 é decisão de produto, não bug.
+- Cobertura de teste do orquestrador (`chatbot.ts`), `agent.ts` (parse/prompt), `media.ts`/`message-routing.ts` (fallbacks de mídia), `human-takeover.ts` e as rotas admin/webhook continuam sem teste dedicado além do que já existia.
+- Vulnerabilidade do lado do CRM (RPC `desativar_whatsapp_por_celular` liberada pra `anon`) tem endpoint substituto pronto (`web/src/app/api/whatsapp/parar/route.ts`, ver `CONTEXTO.md` do `crm-operacional`), mas a Flora **não chama esse endpoint** — a detecção de "PARAR" e o opt-out automático nunca foram implementados do lado da Flora. Migration de revogação da RPC preparada mas não aplicada (MCP do Supabase fora do ar durante toda a sessão).
+- Achados C1, C3, C4, A1, A5, A6, A9, A12, A13, A14, A15 do `mapeamento.md` seguem no estado documentado ali (a maioria é bloqueio estrutural pro multi-tenant, fora do escopo desta sessão de correção pontual).

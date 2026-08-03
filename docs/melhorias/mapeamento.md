@@ -3,6 +3,8 @@
 > Gerado em 2026-06-06 a partir de análise profunda de todo o código (~5.300 linhas TS, schema SQL, painel admin, testes).
 > Objetivo do produto: transformar a Flora (agente do Studio Mariana Castro) em SaaS multi-tenant para studios beauty.
 > Plano mestre: `~/.claude/plans/snazzy-snuggling-lemur.md`.
+>
+> **Atualização 2026-08-03**: diagnóstico novo + sessão de correções (ver `2026-08-03-diagnostico-e-fixes.md`). C6 e A4 resolvidos nesta data (ver notas nas linhas). A11 **piorou** desde então (bloco de agenda foi de 14 para 30 dias, commit `aad12c0`) — não corrigido, é decisão de produto (horizonte de disponibilidade), não bug. A10 segue aberto.
 
 ---
 
@@ -26,7 +28,7 @@ O código funciona em produção e está bem documentado, mas tem **dois eixos d
 | C3 | App inteiro usa `service_role` (bypassa RLS). Isolamento depende 100% do código lembrar de filtrar `tenant_id` | `supabase.ts:4-16` | Um `select` esquecido vaza dados entre studios |
 | C4 | **Nenhuma query do admin filtra por `tenant_id`** (sessions, messages, pause, config, reviews) | `admin.ts:73,126,144,159,181` | IDOR cross-tenant: tenant A lê conversa do tenant B |
 | C5 | Buffer reivindicado **depois** do `runAgent` (peek+mark tardio); `claimPendingBuffer` atômica existe mas é código morto | `chatbot.ts:896,1037`; `buffer.ts:117` | Resposta duplicada ao cliente em deploy multi-réplica |
-| C6 | Regex de bloco de agendamento **diverge** entre remoção e detecção | `chatbot.ts:991-992` vs `1163-1166` | Bloco some do texto mas pendência nunca é criada → agendamento perdido silenciosamente |
+| C6 | ~~Regex de bloco de agendamento **diverge** entre remoção e detecção~~ **RESOLVIDO (2026-08-03).** Fechamento tolerante (`\s*$` em vez de `\n\s*$`) + detecção movida pra rodar por mensagem (`encontrarBloco`, `pending-actions.ts`), igual à remoção — nunca mais sobre `mensagens.join('\n')`. Ver `2026-08-03-diagnostico-e-fixes.md`. | `chatbot.ts:991-992` vs `1163-1166` | Bloco some do texto mas pendência nunca é criada → agendamento perdido silenciosamente |
 | C7 | Fuso de Brasília calculado via `getTimezoneOffset()` do servidor — só funciona por acaso no Railway (UTC) | `weekly-review.ts:264-271,153-158` | Viola regra 10 do projeto; quebra em qualquer servidor não-UTC |
 | C8 | Project ref do Supabase + URLs de imagem hardcoded no código | `chatbot.ts:974-985` | Impossível atender outro studio sem editar e redeployar |
 | C9 | System prompt inteiro (nome, endereço, Pix `41998187167`, preços, profissionais) hardcoded no `seed.sql`, tabela global | `seed.sql:27-328` | Rodar seed em multi-tenant zera prompt de todos; sem prompt por tenant |
@@ -42,7 +44,7 @@ O código funciona em produção e está bem documentado, mas tem **dois eixos d
 | A1 | Singleton `getEvolutionClient()` lê env global → serve 1 tenant só (ou mistura WhatsApp de clientes) | `evolution.ts:318-332` |
 | A2 | Horários do studio **duplicados e divergentes** entre `agent.ts` e `calendar-availability.ts` (Scarlet some na agenda) | `agent.ts:84-92` vs `calendar-availability.ts:32-52` |
 | A3 | OpenAI sem timeout/retry; chamada principal sem try/catch → flush trava segurando slot inflight | `openai.ts:8`, `agent.ts:199` |
-| A4 | Webhook sem autenticação de origem (qualquer POST forja mensagens) | `webhooks/evolution.ts:5-17` |
+| A4 | ~~Webhook sem autenticação de origem (qualquer POST forja mensagens)~~ **RESOLVIDO, atrás de flag (2026-08-03).** `EVOLUTION_WEBHOOK_TOKEN` opcional (`?token=` na URL); default vazio preserva o comportamento atual até configurar nos dois lados (env var + URL no Manager da Evolution). | `webhooks/evolution.ts:5-17` |
 | A5 | Webhook fire-and-forget responde 200; falha = mensagem perdida sem fila durável | `webhooks/evolution.ts:12-16` |
 | A6 | Erros de persistência (`persistIncoming/Assistant`) só logam `warn` e seguem como se gravou | `chatbot.ts:689-691,709-711` |
 | A7 | Echo detectado por **conteúdo exato** + 60s → mensagem manual curta da Mariana ("ok!") vira eco e some | `chatbot.ts:407-440` |

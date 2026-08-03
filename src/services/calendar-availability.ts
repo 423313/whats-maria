@@ -125,6 +125,104 @@ async function fetchBusyIntervals(
   return intervals;
 }
 
+// ───── fonte alternativa: CRM (integração de agenda, corte da Belasis) ─────
+
+interface CrmOcupacaoResposta {
+  ok: boolean;
+  ocupados?: { inicio_ms: number; fim_ms: number }[];
+}
+
+/**
+ * Busca ocupação bruta em GET /api/flora/ocupacao no CRM. Ao contrário de
+ * fetchBusyIntervals (Google), aqui todo erro é sempre lançado — nunca lista
+ * vazia silenciosa. Quem chama decide o que fazer (ver fetchBusyForSource):
+ * um bug de deploy no CRM devolvendo `{ok:true, ocupados:[]}` não pode virar
+ * "mês todo livre" pra Flora.
+ */
+export async function fetchBusyFromCrm(deMs: number, ateMs: number): Promise<BusyInterval[]> {
+  const baseUrl = env.CRM_BASE_URL;
+  const secret = env.CRM_API_SECRET;
+  if (!baseUrl || !secret) {
+    throw new Error('CRM_BASE_URL/CRM_API_SECRET ausentes');
+  }
+
+  const url = new URL('/api/flora/ocupacao', baseUrl);
+  url.searchParams.set('de', new Date(deMs).toISOString());
+  url.searchParams.set('ate', new Date(ateMs).toISOString());
+
+  const res = await fetch(url, {
+    headers: { authorization: `Bearer ${secret}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    throw new Error(`CRM /api/flora/ocupacao respondeu ${res.status}`);
+  }
+
+  const corpo = (await res.json()) as CrmOcupacaoResposta;
+  if (corpo?.ok !== true || !Array.isArray(corpo.ocupados)) {
+    throw new Error('CRM /api/flora/ocupacao: resposta invalida');
+  }
+
+  return corpo.ocupados
+    .map((o) => ({ startMs: o.inicio_ms, endMs: o.fim_ms }))
+    .filter(
+      (i) => Number.isFinite(i.startMs) && Number.isFinite(i.endMs) && i.endMs > i.startMs,
+    );
+}
+
+/** Busca ocupação no Google Calendar. Lança erro (nunca fallback) se não configurado. */
+export async function fetchBusyFromGcal(deMs: number, ateMs: number): Promise<BusyInterval[]> {
+  const client = getCalendarClient();
+  if (!client) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY/GOOGLE_CALENDAR_ID ausentes');
+  }
+  return fetchBusyIntervals(client.calendar, client.calendarId, new Date(deMs), new Date(ateMs));
+}
+
+/**
+ * Escolhe a fonte de ocupação conforme AGENDA_SOURCE. Em 'union', a fonte
+ * marcada em AGENDA_UNION_REQUIRED é fail-closed (falha propaga e vira
+ * FAILURE_FALLBACK pra quem chama); a outra fonte, se falhar, só gera warn e
+ * o resultado segue só com o que deu certo.
+ */
+async function fetchBusyForSource(startSp: Date, endSp: Date): Promise<BusyInterval[]> {
+  const deMs = startSp.getTime();
+  const ateMs = endSp.getTime();
+
+  if (env.AGENDA_SOURCE === 'crm') {
+    return fetchBusyFromCrm(deMs, ateMs);
+  }
+
+  if (env.AGENDA_SOURCE === 'union') {
+    const [gcalResult, crmResult] = await Promise.allSettled([
+      fetchBusyFromGcal(deMs, ateMs),
+      fetchBusyFromCrm(deMs, ateMs),
+    ]);
+
+    if (env.AGENDA_UNION_REQUIRED === 'crm' && crmResult.status === 'rejected') {
+      throw crmResult.reason;
+    }
+    if (env.AGENDA_UNION_REQUIRED === 'gcal' && gcalResult.status === 'rejected') {
+      throw gcalResult.reason;
+    }
+
+    const combined: BusyInterval[] = [];
+    if (gcalResult.status === 'fulfilled') {
+      combined.push(...gcalResult.value);
+    } else {
+      logger.warn({ err: gcalResult.reason }, 'calendar-availability: fonte gcal falhou em modo union, seguindo so com crm');
+    }
+    if (crmResult.status === 'fulfilled') {
+      combined.push(...crmResult.value);
+    } else {
+      logger.warn({ err: crmResult.reason }, 'calendar-availability: fonte crm falhou em modo union, seguindo so com gcal');
+    }
+    return combined;
+  }
+
+  return fetchBusyFromGcal(deMs, ateMs);
+}
+
 // ───── geração de slots livres ─────
 
 export interface DaySlots {
@@ -397,6 +495,59 @@ function formatContext(daySlots: DaySlots[]): string {
   return gridHeader + gridLines.join('\n') + rawHeader + rawLines.join('\n');
 }
 
+// ───── modo sombra: diff entre fontes (Google x CRM) ─────
+
+export interface DiffSlot {
+  day: string; // dateLabel, ex "12/05"
+  slot: string; // "09:00"
+}
+
+export interface AgendaDiff {
+  onlyGcal: DiffSlot[]; // ocupado só segundo o Google (o CRM acha livre)
+  onlyCrm: DiffSlot[]; // ocupado só segundo o CRM (o Google acha livre)
+}
+
+/**
+ * Compara a ocupação de duas fontes ao longo da janela de DAYS_AHEAD, slot a
+ * slot (30 min), dentro do horário de funcionamento. Pura: não faz rede, só
+ * reaproveita buildDaySlots com o mesmo `busy` de cada fonte. Não carrega
+ * nenhum dado de cliente — só dia/horário, usada tanto no modo sombra em
+ * produção (log) quanto no script `scripts/agenda-diff.ts`.
+ */
+export function diffBusySources(
+  startSp: Date,
+  gcalBusy: BusyInterval[],
+  crmBusy: BusyInterval[],
+  nowMs: number = Date.now(),
+): AgendaDiff {
+  const now = nowMs;
+  const onlyGcal: DiffSlot[] = [];
+  const onlyCrm: DiffSlot[] = [];
+
+  for (let i = 0; i < DAYS_AHEAD; i++) {
+    const dayStart = new Date(startSp.getTime() + i * 24 * 60 * 60 * 1000);
+    const parts = spParts(dayStart);
+
+    // Grade completa do dia (sem nenhum evento), pra saber quais slots existem
+    // de fato — buildDaySlots só devolve os LIVRES, então precisamos da grade
+    // "vazia" pra achar por diferença quais estão ocupados em cada fonte.
+    const full = buildDaySlots(parts, [], now);
+    if (full.closed || full.slots.length === 0) continue;
+
+    const freeGcal = new Set(buildDaySlots(parts, gcalBusy, now).slots);
+    const freeCrm = new Set(buildDaySlots(parts, crmBusy, now).slots);
+
+    for (const slot of full.slots) {
+      const busyGcal = !freeGcal.has(slot);
+      const busyCrm = !freeCrm.has(slot);
+      if (busyGcal && !busyCrm) onlyGcal.push({ day: full.dateLabel, slot });
+      if (busyCrm && !busyGcal) onlyCrm.push({ day: full.dateLabel, slot });
+    }
+  }
+
+  return { onlyGcal, onlyCrm };
+}
+
 // ───── API pública ─────
 
 const FAILURE_FALLBACK =
@@ -417,8 +568,11 @@ export async function buildAvailabilityContext(): Promise<string> {
     return cachedContext.text;
   }
 
-  const client = getCalendarClient();
-  if (!client) {
+  // Só no caminho 'gcal' (o padrão hoje) preservamos o log/fallback ANTES de
+  // entrar no try — bit-a-bit igual ao comportamento anterior a esta mudança.
+  // 'union'/'crm' têm sua própria checagem de configuração dentro de
+  // fetchBusyForSource, cujo erro é pego pelo catch abaixo.
+  if (env.AGENDA_SOURCE === 'gcal' && !getCalendarClient()) {
     logger.warn('calendar-availability: GOOGLE_SERVICE_ACCOUNT_KEY/GOOGLE_CALENDAR_ID ausentes');
     return FAILURE_FALLBACK;
   }
@@ -428,7 +582,32 @@ export async function buildAvailabilityContext(): Promise<string> {
     const startSp = spDate(today.year, today.month1, today.day, 0);
     const endSp = new Date(startSp.getTime() + DAYS_AHEAD * 24 * 60 * 60 * 1000);
 
-    const busy = await fetchBusyIntervals(client.calendar, client.calendarId, startSp, endSp);
+    const busy = await fetchBusyForSource(startSp, endSp);
+
+    // Sombra: só quando a fonte real ainda é 'gcal' (zero risco — nunca troca
+    // o que a Flora oferece). Fire-and-forget, qualquer falha só vira log.
+    if (env.AGENDA_SOURCE === 'gcal' && env.AGENDA_SHADOW === 'on') {
+      void fetchBusyFromCrm(startSp.getTime(), endSp.getTime())
+        .then((crmBusy) => {
+          const diff = diffBusySources(startSp, busy, crmBusy);
+          if (diff.onlyGcal.length === 0 && diff.onlyCrm.length === 0) {
+            logger.info('calendar-availability: sombra CRM sem divergencia');
+            return;
+          }
+          logger.warn(
+            {
+              onlyGcalCount: diff.onlyGcal.length,
+              onlyCrmCount: diff.onlyCrm.length,
+              onlyGcalAmostra: diff.onlyGcal.slice(0, 5),
+              onlyCrmAmostra: diff.onlyCrm.slice(0, 5),
+            },
+            'calendar-availability: sombra CRM com divergencia',
+          );
+        })
+        .catch((err) => {
+          logger.warn({ err }, 'calendar-availability: sombra CRM falhou (nao afeta resposta)');
+        });
+    }
 
     const days: DaySlots[] = [];
     for (let i = 0; i < DAYS_AHEAD; i++) {
@@ -441,7 +620,7 @@ export async function buildAvailabilityContext(): Promise<string> {
     cachedContext = { text, expiresAt: now + CACHE_TTL_MS };
     return text;
   } catch (err) {
-    logger.error({ err }, 'calendar-availability: falha ao consultar Google Calendar');
+    logger.error({ err }, 'calendar-availability: falha ao consultar agenda');
     return FAILURE_FALLBACK;
   }
 }

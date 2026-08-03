@@ -50,8 +50,8 @@ A Flora e o WAHA (stack de WhatsApp do CRM) estão pareados no mesmo número. To
 | Task 0 — Diagnóstico | **Concluída** (2026-08-02, ver seção acima) |
 | Task 1 — Guardrail no belasis-sync | **Concluída** (2026-08-03, ver seção abaixo) |
 | Task 2 — Blindagem do eco cruzado | **Concluída, atrás de feature flag off** (2026-08-03, ver seção abaixo) |
-| Task 3 — Nova camada de fonte em calendar-availability.ts | Pendente |
-| Task 4 — Modo sombra e troca de fonte | Pendente |
+| Task 3 — Nova camada de fonte em calendar-availability.ts | **Concluída** (2026-08-03, ver seção abaixo) |
+| Task 4 — Modo sombra e troca de fonte | **Concluída, atrás de env vars não configuradas** (2026-08-03, ver seção abaixo) |
 | Task 5 — Ajustes em pending-actions/studio-schedule | Pendente |
 | Task 6 — Consistência de duração/preço | v1.5, não entra no corte |
 | Task 7 — Plano de corte | Pendente, depende das tasks acima |
@@ -116,11 +116,31 @@ if (existentes >= 5 && filtered.length < Math.ceil(existentes * MIN_RATIO)) {
 
 ---
 
+## Task 3 e Task 4 concluídas (2026-08-03)
+
+**Task 3 (`fetchBusyFromCrm`, `fetchBusyFromGcal`, `fetchBusyForSource`)**: implementada exatamente como no plano, com o contrato real de `GET /api/flora/ocupacao` conferido no repositório do CRM antes de codar (`web/src/lib/ocupacao.ts`/`web/src/app/api/flora/ocupacao/route.ts`) — `{ok, ocupados: [{inicio_ms, fim_ms}], fechados}`, header `authorization: Bearer <FLORA_API_SECRET>`, mesmo segredo que vira `CRM_API_SECRET` deste lado. `fetchBusyFromCrm` sempre lança erro (nunca fallback silencioso), igual ao stub do plano. `fetchBusyForSource` decide a fonte por `AGENDA_SOURCE`: em `union`, roda as duas em paralelo (`Promise.allSettled`) e só propaga erro da fonte marcada em `AGENDA_UNION_REQUIRED` — a outra vira warn e segue com o que der certo.
+
+**Task 4 (troca de fonte + sombra + diff)**: `buildAvailabilityContext` foi reescrita para chamar `fetchBusyForSource` em vez de ir direto no Google — com uma ressalva: o caminho `AGENDA_SOURCE=gcal` (o padrão hoje) manteve a checagem de configuração ausente ANTES do `try`, bit-a-bit igual ao comportamento anterior a esta mudança, satisfazendo a invariante "zero risco" do plano. Modo sombra (`AGENDA_SHADOW=on`) só roda quando a fonte ainda é `gcal`: busca o CRM em paralelo (fire-and-forget, `.catch` vira só warn) e loga a divergência via `diffBusySources`, uma função pura nova que compara duas listas de `BusyInterval` slot a slot (30 min) dentro do horário de funcionamento, sem nenhum dado de cliente — só dia (`dateLabel`) e horário (`"09:00"`). `scripts/agenda-diff.ts` criado (roda com `npx tsx scripts/agenda-diff.ts`, fora do processo principal, não depende de `AGENDA_SHADOW` estar ligado) para o uso manual/cron diário previsto no plano, reaproveitando os mesmos `fetchBusyFromGcal`/`fetchBusyFromCrm`/`diffBusySources` exportados.
+
+Novas env vars em `src/config/env.ts` e documentadas em `.env.example`: `CRM_BASE_URL`, `CRM_API_SECRET`, `AGENDA_SOURCE` (default `gcal`), `AGENDA_UNION_REQUIRED` (default `crm`), `AGENDA_SHADOW` (default `off`) — todos os defaults reproduzem o comportamento atual exato, rollback é só trocar a variável, sem deploy.
+
+8 testes novos em `tests/calendar-availability-crm.test.ts` (parse/erro de `fetchBusyFromCrm`, incluindo header de autorização; `diffBusySources` sem divergência/only_gcal/only_crm, com `nowMs` injetável como parâmetro — mesmo padrão de `buildDaySlots`, pra não depender da data real do teste). `npm test` (176/176), `npm run typecheck` e `npm run build` limpos.
+
+**Limitação conhecida, não coberta por esta sessão**: `checkConsecutiveSlotsFree` (usada por `pending-actions.ts` pra avisar a Mariana quando o horário pedido não cabe na duração do serviço) continua só consultando o Google Calendar, independente de `AGENDA_SOURCE`, e continua fail-open (retorna `{valid:true}` em qualquer erro). Isso é escopo da Task 5 (`SlotCheck` com `unverified`, fail-closed), ainda pendente — o risco é baixo porque essa checagem é só advisory (nunca bloqueia a pré-reserva, só ajusta o aviso à Mariana), mas vale fechar antes de `AGENDA_SOURCE` sair de `gcal` de vez.
+
+**O que falta, fora de código, antes de qualquer flip de env var**:
+1. Configurar `CRM_BASE_URL`/`CRM_API_SECRET` na Railway com o mesmo segredo do `FLORA_API_SECRET` do CRM na Vercel.
+2. Deploy.
+3. Ligar `AGENDA_SHADOW=on` (com `AGENDA_SOURCE` continuando `gcal`) e rodar `scripts/agenda-diff.ts` diariamente (manual ou cron próprio) — critério de corte do plano é divergência zero por 7 dias corridos, com dual-entry da Mariana confirmado no período.
+4. Só depois disso avaliar Task 5 e então a sequência de corte da Task 7.
+
+---
+
 ## Task 3: Nova camada de fonte em `calendar-availability.ts`
 
 **Files:** `src/services/calendar-availability.ts`, `src/config/env.ts`
 
-- [ ] Nova função substituindo `fetchBusyIntervals` no caminho CRM:
+- [x] Nova função substituindo `fetchBusyIntervals` no caminho CRM:
 
 ```ts
 async function fetchBusyFromCrm(deMs: number, ateMs: number): Promise<{startMs: number; endMs: number}[]> {
@@ -141,8 +161,8 @@ async function fetchBusyFromCrm(deMs: number, ateMs: number): Promise<{startMs: 
 
   O `throw` é proposital: quem chama cai no caminho fail-closed (Task 4), nunca em lista vazia silenciosa.
 
-- [ ] Novas env vars: `CRM_BASE_URL`, `CRM_API_SECRET`, `AGENDA_SOURCE=gcal|union|crm` (default `gcal`), `AGENDA_UNION_REQUIRED=gcal|crm` (só relevante quando `AGENDA_SOURCE=union`).
-- [ ] Cache: manter o TTL de 60s já existente, aplicado à fonte ativa.
+- [x] Novas env vars: `CRM_BASE_URL`, `CRM_API_SECRET`, `AGENDA_SOURCE=gcal|union|crm` (default `gcal`), `AGENDA_UNION_REQUIRED=gcal|crm` (só relevante quando `AGENDA_SOURCE=union`).
+- [x] Cache: manter o TTL de 60s já existente, aplicado à fonte ativa (o cache continua em cima do resultado de `fetchBusyForSource`, agnóstico de qual fonte foi usada).
 
 ---
 
@@ -150,12 +170,12 @@ async function fetchBusyFromCrm(deMs: number, ateMs: number): Promise<{startMs: 
 
 **Files:** `src/services/calendar-availability.ts`, novo `scripts/agenda-diff.ts`
 
-- [ ] `AGENDA_SOURCE=gcal` (produção real) + `AGENDA_SHADOW=on` (consulta o CRM em paralelo, loga divergência, nunca usa o resultado). Zero risco: a sombra nunca toca o que a cliente recebe.
-- [ ] `scripts/agenda-diff.ts` rodando diariamente: compara os intervalos ocupados das duas fontes na janela de 30 dias, reporta `only_gcal`, `only_crm`, sem nenhum dado de cliente — só contagem e horário.
-- [ ] Critério de corte: divergência zero por 7 dias corridos, com a Mariana lançando em duplicidade (Belasis + CRM) confirmada nesse período — sem dual-entry a sombra não mede nada.
-- [ ] No dia do corte da Belasis: `AGENDA_SOURCE=union`, `AGENDA_UNION_REQUIRED=crm`. A partir daqui, falha do CRM é fail-closed; falha do GCal (congelado) só gera warn e segue.
+- [x] `AGENDA_SOURCE=gcal` (produção real) + `AGENDA_SHADOW=on` (consulta o CRM em paralelo, loga divergência, nunca usa o resultado). Zero risco: a sombra nunca toca o que a cliente recebe. **Código pronto, ainda não ligado em produção** (depende de `CRM_BASE_URL`/`CRM_API_SECRET` configuradas na Railway).
+- [x] `scripts/agenda-diff.ts` criado: compara os intervalos ocupados das duas fontes na janela de 30 dias, reporta `only_gcal`, `only_crm`, sem nenhum dado de cliente — só contagem e horário. **Ainda não agendado pra rodar diariamente** (uso manual via `npx tsx scripts/agenda-diff.ts` até decidir onde colocar o cron).
+- [ ] Critério de corte: divergência zero por 7 dias corridos, com a Mariana lançando em duplicidade (Belasis + CRM) confirmada nesse período — sem dual-entry a sombra não mede nada. **Depende da observação em produção começar.**
+- [ ] No dia do corte da Belasis: `AGENDA_SOURCE=union`, `AGENDA_UNION_REQUIRED=crm`. A partir daqui, falha do CRM é fail-closed; falha do GCal (congelado) só gera warn e segue. Suporte de código já existe em `fetchBusyForSource`, só falta o flip da variável no dia certo.
 - [ ] D+15 (ou quando `only_gcal` — leia-se, o GCal congelado bloqueando horário livre de verdade — passar de ~2 slots/dia): `AGENDA_SOURCE=crm`. Manter o código do caminho `gcal` por mais 30 dias como máquina do tempo.
-- [ ] Rollback em qualquer etapa: flip de `AGENDA_SOURCE`, sem deploy.
+- [x] Rollback em qualquer etapa: flip de `AGENDA_SOURCE`, sem deploy — nenhuma das três fontes exige mudança de código, só de variável de ambiente.
 
 ---
 

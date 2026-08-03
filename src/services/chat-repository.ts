@@ -9,6 +9,7 @@
 import { supabase } from '../lib/supabase.js';
 import { logger } from '../lib/logger.js';
 import { PENDING_ECHO_WINDOW_MS, isFloraEcho } from '../lib/echo-registry.js';
+import { isExternalAutomationEcho } from '../lib/external-echo.js';
 
 export interface PersistMessageInput {
   sessionId: string;
@@ -187,13 +188,18 @@ export async function hasRecentFloraReplyWithContent(
 }
 
 /**
- * Decide se um webhook fromMe é ECO da própria Flora (e, portanto, NÃO deve ativar
- * a janela manual da Mariana). Hierarquia de sinais:
- *   1. messageId no echo-registry in-memory → eco (sinal forte e exato).
+ * Decide se um webhook fromMe é ECO da própria Flora OU de uma automação externa
+ * (hoje: WAHA do CRM, mesmo número) e, portanto, NÃO deve ativar a janela manual
+ * da Mariana. Hierarquia de sinais:
+ *   1. messageId no echo-registry in-memory → eco da Flora (sinal forte e exato).
  *   2. Há texto? compara o CONTEÚDO com respostas recentes da Flora — eco tem texto
  *      idêntico ao enviado; mensagem manual da Mariana tem texto novo → não é eco.
- *   3. Sem texto (mídia) e sem id no registry → NÃO é eco (mídia manual da Mariana;
- *      o eco de mídia da própria Flora sempre tem id no registry via registerFloraEcho).
+ *   3. messageId registrado pelo CRM em `external_outbound_messages`, ou conteúdo bate
+ *      com um template conhecido do CRM → eco de automação externa (ver `external-echo.ts`,
+ *      atrás do flag `EXTERNAL_ECHO_ENABLED`).
+ *   4. Nenhum dos anteriores (inclui mídia sem id no registry) → NÃO é eco (mídia manual
+ *      da Mariana; o eco de mídia da própria Flora sempre tem id no registry via
+ *      registerFloraEcho).
  *
  * NÃO usamos mais "existe qualquer resposta recente da Flora" como prova de eco: esse
  * sinal fraco mascarava mensagens manuais da Mariana sempre que a Flora tinha respondido
@@ -206,8 +212,8 @@ export async function resolveIsFloraEcho(
 ): Promise<boolean> {
   if (isFloraEcho(messageId)) return true;
   const trimmed = text?.trim();
-  if (trimmed) return hasRecentFloraReplyWithContent(sessionId, trimmed);
-  return false;
+  if (trimmed && (await hasRecentFloraReplyWithContent(sessionId, trimmed))) return true;
+  return isExternalAutomationEcho(messageId, trimmed);
 }
 
 export async function isAIPaused(sessionId: string): Promise<boolean> {

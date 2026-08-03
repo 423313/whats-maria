@@ -10,6 +10,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// chat-repository.ts agora também consulta external-echo.ts (eco cruzado WAHA→Flora),
+// que depende de config/env.js — mockado aqui com o flag desligado por padrão, então
+// esses testes continuam exercitando só o comportamento pré-existente do eco da Flora.
+vi.mock('../src/config/env.js', () => ({
+  env: { EXTERNAL_ECHO_ENABLED: 'off' },
+}));
+
 // Resultado configurável da consulta de conteúdo (match de resposta recente da Flora).
 let maybeSingleResult: { data: unknown; error: unknown } = { data: null, error: null };
 

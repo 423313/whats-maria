@@ -14,6 +14,7 @@
 
 import { env } from '../config/env.js';
 import { isFloraEcho } from '../lib/echo-registry.js';
+import { filterExternalEchoIds, isKnownCrmTemplate } from '../lib/external-echo.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 import { logger } from '../lib/logger.js';
 import { supabase } from '../lib/supabase.js';
@@ -198,7 +199,18 @@ async function checkSession(
   // registrada só no echo-registry em memória, não em chat_messages — sem essa
   // checagem, o polling confunde o eco com mensagem manual da Mariana e ativa
   // a janela de 24h indevidamente, silenciando a Flora (ver isFloraEcho).
-  const desconhecidos = candidatos.filter((m) => !knownIds.has(m.keyId) && !isFloraEcho(m.keyId));
+  const semEcoDeFlora = candidatos.filter((m) => !knownIds.has(m.keyId) && !isFloraEcho(m.keyId));
+
+  if (semEcoDeFlora.length === 0) return;
+
+  // Mesma checagem de eco de automação externa (WAHA do CRM) que `resolveIsFloraEcho`
+  // aplica no webhook — sem isso, o polling reconhece o mesmo eco cruzado que o
+  // webhook já ignora e ativa a janela de 24h por engano (ver external-echo.ts).
+  const externalEchoIds = await filterExternalEchoIds(semEcoDeFlora.map((m) => m.keyId));
+  const desconhecidos = semEcoDeFlora.filter((m) => {
+    if (externalEchoIds.has(m.keyId)) return false;
+    return !isKnownCrmTemplate(extractTextFromMessage(m.messageType, m.message));
+  });
 
   if (desconhecidos.length === 0) return;
 

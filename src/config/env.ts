@@ -28,6 +28,15 @@ const envSchema = z.object({
   // contexto de disponibilidade real (cai no fallback do calendar-availability).
   GOOGLE_SERVICE_ACCOUNT_KEY: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
+
+  // Eco cruzado WAHA (CRM) → Flora: o CRM chama POST /internal/outbound-echo
+  // logo após cada envio automático, autenticado por este segredo compartilhado.
+  // EXTERNAL_ECHO_ENABLED controla se esse registro é CONSULTADO na hora de decidir
+  // se ativa a janela manual da Mariana. Default 'off': reproduz o comportamento
+  // atual exato até o lado CRM estar deployado e confirmado — rollback instantâneo
+  // sem deploy, só trocando a variável.
+  INTERNAL_ECHO_SECRET: z.string().optional(),
+  EXTERNAL_ECHO_ENABLED: z.enum(['on', 'off']).default('off'),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -11,6 +11,7 @@ import { getEvolutionClient } from '../lib/evolution.js';
 import { buildPendingBlockRegex } from '../lib/pending-block.js';
 import { checkConsecutiveSlotsFree } from './calendar-availability.js';
 import { saveClientName } from './chat-repository.js';
+import { saoPauloParts, saoPauloDateStartToUtcIso } from '../lib/time.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,14 +81,18 @@ export async function handlePendingActions(
     void saveClientName(sessionId, clientName);
   }
 
-  // Salva no banco (ignora duplicata para a mesma sessão+tipo no mesmo dia)
-  const today = new Date().toISOString().split('T')[0];
+  // Salva no banco (ignora duplicata para a mesma sessão+tipo no mesmo dia).
+  // "Dia" em São Paulo, não em UTC: com o dia UTC, das 21h em diante (horário
+  // de Brasília) o dia já tinha virado no servidor — a mesma cliente gerava
+  // uma segunda pending_action (e uma segunda notificação duplicada pra
+  // Mariana) no mesmo dia real, só porque passou da meia-noite em UTC.
+  const today = saoPauloParts().dateStr;
   const { data: existing } = await supabase
     .from('pending_actions')
     .select('id')
     .eq('session_id', sessionId)
     .eq('type', type)
-    .gte('created_at', `${today}T00:00:00Z`)
+    .gte('created_at', saoPauloDateStartToUtcIso(today))
     .maybeSingle();
 
   if (!existing) {
@@ -110,7 +115,14 @@ export async function handlePendingActions(
     const dateMatch = dataHorario.match(/\((\d{2}\/\d{2})\)/);
     const service = fields['procedimento'] ?? '';
     if (timeMatch?.[1] && dateMatch?.[1]) {
-      const currentYear = new Date().getFullYear();
+      // Ano em São Paulo, não em UTC: passado 31/12 21h de Brasília o UTC já
+      // vira o ano seguinte. Mais grave: um pedido em janeiro feito durante
+      // dezembro (dentro do horizonte de 30 dias da Flora) tem mês (1) menor
+      // que o mês atual (12) — é sempre ano seguinte, nunca o mesmo ano. Sem
+      // isso, validava 05/01 do ano ATUAL (já passado) e checava o dia errado.
+      const hoje = saoPauloParts();
+      const mesSolicitado = Number(dateMatch[1].split('/')[1]);
+      const currentYear = mesSolicitado < hoje.month ? hoje.year + 1 : hoje.year;
       const minSlots = serviceToMinSlots(service);
       try {
         const { valid, freeSlots } = await checkConsecutiveSlotsFree(

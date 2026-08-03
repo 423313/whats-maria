@@ -255,6 +255,8 @@ export async function saveClientName(sessionId: string, name: string): Promise<v
   if (error) {
     logger.warn({ err: error.message, session_id: sessionId }, 'saveClientName failed');
   } else {
-    logger.info({ session_id: sessionId, name: clean }, 'nome da cliente registrado');
+    // client_name (não "name") de propósito: já está na lista de redação do
+    // logger; um campo genérico "name" colidiria com err.name em outros logs.
+    logger.info({ session_id: sessionId, client_name: clean }, 'nome da cliente registrado');
   }
 }

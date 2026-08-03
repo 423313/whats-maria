@@ -23,6 +23,16 @@ export const logger = pino({
       // Cobrimos nível topo e um nível aninhado (Pino exige paths explícitos).
       'session_id',
       '*.session_id',
+      'remoteJid',
+      '*.remoteJid',
+      'key_remoteJid',
+      '*.key_remoteJid',
+      'data_remoteJid',
+      '*.data_remoteJid',
+      // buffer.ts loga `zombies: [{ id, session_id }]` — redact de array precisa
+      // do índice explícito (Pino não tem wildcard de índice, só de chave).
+      'zombies[*].session_id',
+      '*.zombies[*].session_id',
       'content',
       '*.content',
       'to',

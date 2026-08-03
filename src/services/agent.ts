@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js';
 import { loadAgentConfig, resolveOpenAIKey, type AgentConfig } from './agent-config.js';
 import { buildAvailabilityContext } from './calendar-availability.js';
 import { STUDIO_STATUS_BY_WEEKDAY } from '../lib/studio-schedule.js';
+import { saoPauloWeekday } from '../lib/time.js';
 
 export const MEDIA_FALLBACK =
   'oi, ainda não consigo ouvir áudios ou ver imagens por aqui, pode me escrever em texto?';
@@ -108,11 +109,11 @@ export function buildDateContext(): string {
   const hour = get('hour');
   const minute = get('minute');
 
-  // Calcula índice do dia da semana via UTC (depois de aplicar offset BR -3h)
-  const utcMs = now.getTime();
-  const brMs = utcMs - 3 * 60 * 60 * 1000;
-  const brDate = new Date(brMs);
-  const weekdayIndex = brDate.getUTCDay();
+  // Mesma fonte usada pelo resto do projeto (lib/time.ts), não um offset -3h
+  // hardcoded — duas fontes de fuso no mesmo bloco de texto (essa e o
+  // Intl.DateTimeFormat do weekdayName acima) divergem se o horário de verão
+  // voltar, e a Flora passaria a dizer "hoje fechado" numa terça, ou vice-versa.
+  const weekdayIndex = saoPauloWeekday(now);
   const status = STUDIO_STATUS_BY_WEEKDAY[weekdayIndex] ?? STUDIO_STATUS_BY_WEEKDAY[0]!;
 
   const statusLine = status.aberto

@@ -191,6 +191,11 @@ export async function handleEvolutionWebhook(
           // Garante linha em chat_control antes do UPDATE (vide nota em handleOutgoingMessage)
           await ensureChatControl(updateSessionId, instance, DEFAULT_AGENT_TYPE);
           await updateMarianaManualAt(updateSessionId);
+        }).catch((err) => {
+          logger.error(
+            { err: err instanceof Error ? err.message : String(err), session_id: updateSessionId },
+            'messages.update fromMe: falha ao resolver eco/ativar janela',
+          );
         });
       }
     }

@@ -14,6 +14,7 @@ import {
 import { getEvolutionClient } from '../lib/evolution.js';
 import { registerFloraEcho } from '../lib/echo-registry.js';
 import { persistAssistantMessage } from '../services/chat-repository.js';
+import { invalidateAgentConfigCache } from '../services/agent-config.js';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -419,6 +420,11 @@ export async function adminRoutes(app: FastifyInstance) {
 
     if (error) return reply.status(500).send({ error: error.message });
 
+    // Sem isso, a Mariana salva o prompt e a Flora continua respondendo com o
+    // antigo por até 30s (cache de agent-config.ts) — ela testa, não vê a
+    // mudança, e salva de novo pensando que não funcionou.
+    invalidateAgentConfigCache();
+
     // Atualiza notes da última entrada do histórico se foi fornecida
     if (notes?.trim()) {
       const { data: lastHistory } = await supabase
@@ -489,6 +495,8 @@ export async function adminRoutes(app: FastifyInstance) {
       .eq('agent_type', 'default');
 
     if (error) return reply.status(500).send({ error: error.message });
+
+    invalidateAgentConfigCache();
 
     // Marca a versão recém-arquivada com nota de "rollback"
     const { data: lastHistory } = await supabase

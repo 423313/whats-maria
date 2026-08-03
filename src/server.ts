@@ -69,6 +69,23 @@ async function main() {
 
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  // Sem isso, o default do Node 20 pra uma rejeição de Promise não tratada é
+  // DERRUBAR O PROCESSO — e há vários `void algumaPromise()` fire-and-forget
+  // pelo código (echo cruzado, pendências, nome da cliente) sem `.catch()`
+  // próprio. Um crash aqui mata todos os timers de debounce em memória e todo
+  // flush inflight de todas as sessões, não só a que causou o erro. Loga e
+  // segue — a falha específica já é tratada (ou logada) no ponto de origem;
+  // isto é só a rede de segurança pra quem escapar.
+  process.on('unhandledRejection', (reason) => {
+    logger.error(
+      { err: reason instanceof Error ? reason.message : String(reason) },
+      'unhandledRejection — processo NÃO derrubado (rede de segurança)',
+    );
+  });
+  process.on('uncaughtException', (err) => {
+    logger.error({ err: err.message, stack: err.stack }, 'uncaughtException — processo NÃO derrubado');
+  });
 }
 
 void main();

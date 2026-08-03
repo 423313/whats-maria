@@ -91,16 +91,25 @@ async function fetchBusyIntervals(
   timeMin: Date,
   timeMax: Date,
 ): Promise<BusyInterval[]> {
-  const res = await calendar.events.list({
-    calendarId,
-    timeMin: timeMin.toISOString(),
-    timeMax: timeMax.toISOString(),
-    singleEvents: true,
-    orderBy: 'startTime',
-    maxResults: 500,
-  });
+  // Sem seguir nextPageToken, mais de 500 eventos na janela (30 dias) somem da
+  // lista de ocupados — não como erro, como TRUNCAMENTO SILENCIOSO do Google.
+  // É o caminho mais direto pra Flora oferecer um horário que já está agendado.
+  const items: calendar_v3.Schema$Event[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await calendar.events.list({
+      calendarId,
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 500,
+      pageToken,
+    });
+    items.push(...(res.data.items ?? []));
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken);
 
-  const items = res.data.items ?? [];
   const intervals: BusyInterval[] = [];
   for (const item of items) {
     const startStr = item.start?.dateTime ?? item.start?.date;

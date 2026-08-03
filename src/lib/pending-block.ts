@@ -12,7 +12,15 @@
 export const PENDING_BLOCK_LABELS = 'SOLICITAÇÃO DE AGENDAMENTO|LEAD DE CURSO';
 
 export function buildPendingBlockRegex(label: string, flags: string): RegExp {
-  return new RegExp(`-{3,}\\s*(?:${label})\\s*-{3,}([\\s\\S]*?)(?:-{3,}|\\n\\s*$)`, flags);
+  // Fechamento tolerante: linha de tracinhos OU fim da string testada (com ou
+  // sem \n antes). A versão antiga exigia um \n literal antes do fim (`\n\s*$`);
+  // a saída do LLM nem sempre termina em \n, e nesse caso o bloco não era
+  // removido NEM detectado — o texto cru vazava pra cliente. Ver também
+  // chatbot.ts/pending-actions.ts: a detecção roda por mensagem, na MESMA
+  // string que a remoção usa, exatamente por essa razão (um bloco que é o
+  // último conteúdo da SUA mensagem "termina no fim da string" nela, mas não
+  // necessariamente no fim de um texto maior que a engloba).
+  return new RegExp(`-{3,}\\s*(?:${label})\\s*-{3,}([\\s\\S]*?)(?:-{3,}|\\s*$)`, flags);
 }
 
 /** Regex global (gi) que casa qualquer um dos blocos — usada para remoção do texto. */

@@ -37,6 +37,11 @@ const envSchema = z.object({
   // sem deploy, só trocando a variável.
   INTERNAL_ECHO_SECRET: z.string().optional(),
   EXTERNAL_ECHO_ENABLED: z.enum(['on', 'off']).default('off'),
+
+  // Token de origem do webhook da Evolution (?token=... na URL cadastrada no
+  // Manager). Opcional: sem ele, o webhook aceita qualquer chamador (mesmo
+  // comportamento de sempre) — ver routes/webhooks/evolution.ts.
+  EVOLUTION_WEBHOOK_TOKEN: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

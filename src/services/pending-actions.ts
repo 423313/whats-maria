@@ -37,18 +37,38 @@ function extractClientName(fields: Record<string, string>): string {
   return fields['nome_da_cliente'] ?? fields['nome'] ?? '';
 }
 
+/**
+ * Procura os blocos estruturados em cada mensagem SEPARADAMENTE (nunca no join
+ * de todas). Isso é o que garante a paridade com a remoção em flushSession
+ * (chatbot.ts), que também roda por mensagem: rodar a detecção sobre
+ * `mensagens.join('\n')` fazia o fechamento por fim-de-texto do bloco (quando
+ * o modelo não emite a linha de "---" final) bater no fim do TEXTO JUNTADO,
+ * não no fim da mensagem onde o bloco de fato vive — se houvesse qualquer
+ * mensagem depois na lista, a detecção falhava e o agendamento se perdia,
+ * mesmo com a remoção (por mensagem) tendo funcionado normalmente.
+ */
+export function encontrarBloco(mensagens: string[]): RegExpMatchArray | null {
+  for (const texto of mensagens) {
+    const m =
+      texto.match(buildPendingBlockRegex('SOLICITAÇÃO DE AGENDAMENTO', 'i')) ??
+      texto.match(buildPendingBlockRegex('LEAD DE CURSO', 'i'));
+    if (m) return m;
+  }
+  return null;
+}
+
 export async function handlePendingActions(
   sessionId: string,
-  allText: string,
+  mensagens: string[],
 ): Promise<void> {
   const phone = sessionId.replace('@s.whatsapp.net', '');
 
-  // Mesmo padrão da remoção em flushSession (fonte única — buildPendingBlockRegex)
-  const agendamentoMatch = allText.match(buildPendingBlockRegex('SOLICITAÇÃO DE AGENDAMENTO', 'i'));
-  const cursoMatch = allText.match(buildPendingBlockRegex('LEAD DE CURSO', 'i'));
-
-  const match = agendamentoMatch ?? cursoMatch;
+  const match = encontrarBloco(mensagens);
   if (!match) return;
+
+  // O tipo é decidido pelo texto do próprio match (mais barato que repetir a
+  // busca): o rótulo capturado no bloco aparece em match[0].
+  const agendamentoMatch = /SOLICITAÇÃO DE AGENDAMENTO/i.test(match[0]!);
 
   const type: 'agendamento' | 'curso' = agendamentoMatch ? 'agendamento' : 'curso';
   const rawBlock = match[0]!;

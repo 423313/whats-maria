@@ -121,26 +121,77 @@ describe('bloco no meio do texto', () => {
 // ─── Bloco fechado pelo fim do texto (sem linha de --- final) ───────────────────
 
 describe('bloco fechado pelo fim do texto', () => {
-  // NOTA: o fechamento por fim de texto é `\n\s*$` — exige um \n após o corpo.
-  // Por isso o texto termina com '\n' (cenário realista: a saída do LLM tem
-  // quebra de linha final). Sem o \n final, o bloco NÃO seria fechado/detectado.
-  const texto =
-    [
-      'Vou registrar aqui:',
-      '--- LEAD DE CURSO ---',
-      'Nome: Bia',
-      'Curso: Starter',
-    ].join('\n') + '\n';
+  // Fechamento tolerante: `\s*$` não exige mais um \n literal antes do fim.
+  // Ambas as variantes (com e sem \n final) precisam funcionar — é exatamente
+  // o formato que a saída de um LLM produz na prática, com ou sem newline.
+  const comQuebraFinal =
+    ['Vou registrar aqui:', '--- LEAD DE CURSO ---', 'Nome: Bia', 'Curso: Starter'].join('\n') +
+    '\n';
+  const semQuebraFinal = ['Vou registrar aqui:', '--- LEAD DE CURSO ---', 'Nome: Bia', 'Curso: Starter'].join(
+    '\n',
+  );
 
-  it('detecta e remove mesmo sem a linha de fechamento ---', () => {
-    const m = texto.match(buildPendingBlockRegex(CURSO_LABEL, 'i'));
+  it('detecta e remove com \\n final', () => {
+    const m = comQuebraFinal.match(buildPendingBlockRegex(CURSO_LABEL, 'i'));
     expect(m).not.toBeNull();
     expect(m![1]).toContain('Nome: Bia');
 
-    const limpo = texto.replace(pendingBlockRemovalRegex(), '').trim();
+    const limpo = comQuebraFinal.replace(pendingBlockRemovalRegex(), '').trim();
     expect(limpo).toContain('Vou registrar aqui:');
     expect(limpo).not.toContain('LEAD DE CURSO');
     expect(limpo).not.toContain('Nome: Bia');
+  });
+
+  it('detecta e remove SEM \\n final (bug real: LLM nem sempre termina com quebra de linha)', () => {
+    const m = semQuebraFinal.match(buildPendingBlockRegex(CURSO_LABEL, 'i'));
+    expect(m).not.toBeNull();
+    expect(m![1]).toContain('Nome: Bia');
+
+    const limpo = semQuebraFinal.replace(pendingBlockRemovalRegex(), '').trim();
+    expect(limpo).toContain('Vou registrar aqui:');
+    expect(limpo).not.toContain('LEAD DE CURSO');
+    expect(limpo).not.toContain('Nome: Bia');
+  });
+});
+
+// ─── Bug real do achado: bloco na 1ª mensagem, texto solto na 2ª ───────────────
+//
+// Reprodução exata do achado C6/P0: a Flora responde em duas mensagens (bolhas
+// separadas no WhatsApp). O bloco fica inteiro na 1ª, sem "---" de fechamento
+// nem \n final (o LLM só parou de escrever). A remoção (chatbot.ts) SEMPRE
+// roda por mensagem. Antes, a detecção (pending-actions.ts) rodava sobre
+// `mensagens.join('\n')` — o bloco deixava de estar "no fim do texto testado"
+// porque a 2ª mensagem vinha depois, e a pendência se perdia mesmo com a
+// remoção tendo funcionado (cliente não via o bloco cru, mas a Mariana também
+// nunca era avisada). Rodar por mensagem (como aqui) resolve pela raiz.
+describe('bug real: bloco na 1ª mensagem de duas, sem fechamento', () => {
+  const mensagens = [
+    'perfeito, anotei\n--- SOLICITAÇÃO DE AGENDAMENTO ---\nNome: Ana\nProcedimento: alongamento',
+    'a Mariana confirma em seguida!',
+  ];
+
+  it('remoção por mensagem funciona em ambas', () => {
+    const limpas = mensagens.map((m) => m.replace(pendingBlockRemovalRegex(), '').trim());
+    expect(limpas[0]).toBe('perfeito, anotei');
+    expect(limpas[1]).toBe('a Mariana confirma em seguida!');
+  });
+
+  it('detecção por mensagem (não pelo join) encontra o bloco na 1ª mensagem', () => {
+    const encontrado = mensagens.some((m) => buildPendingBlockRegex(AGENDAMENTO_LABEL, 'i').test(m));
+    expect(encontrado).toBe(true);
+  });
+
+  it('detecção pelo JOIN de todas as mensagens captura texto que não é do bloco (por isso não usar join)', () => {
+    // Com o fechamento tolerante (\s*$), o join ainda "detecta" — mas o corpo
+    // capturado vaza a 2ª mensagem inteira, porque o "fim do texto" agora é o
+    // fim do JOIN, não o fim da mensagem onde o bloco realmente termina. Sem a
+    // regex antiga (que exigia \n antes do fim), esse caso silenciosamente não
+    // detectava nada; com ela, detecta errado. As duas formas são erradas —
+    // só detectar por mensagem (como handlePendingActions faz hoje) é correto.
+    const allText = mensagens.join('\n');
+    const match = allText.match(buildPendingBlockRegex(AGENDAMENTO_LABEL, 'i'));
+    expect(match).not.toBeNull();
+    expect(match![1]).toContain('a Mariana confirma em seguida!');
   });
 });
 

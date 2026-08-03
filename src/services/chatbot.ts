@@ -660,6 +660,20 @@ async function flushSession(sessionId: string): Promise<void> {
     return;
   }
 
+  // Detecta blocos de pendência (agendamento/curso) UMA VEZ AQUI, logo após o
+  // agente responder — não mais no fim do loop de envio abaixo. Antes, isso só
+  // rodava quando o loop chegava inteiro até a última mensagem; um `break` no
+  // meio (janela da Mariana ativando, erro do Evolution numa mensagem
+  // anterior) perdia a pendência silenciosamente mesmo que o bloco já tivesse
+  // sido gerado pelo agente. A pendência é um sinal interno do que o modelo
+  // decidiu — não depende de a mensagem ter sido efetivamente entregue.
+  handlePendingActions(sessionId, mensagens).catch((err) => {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), session_id: sessionId },
+      'handlePendingActions falhou',
+    );
+  });
+
   const TABELA_PRECOS_URL = 'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/precos.jpeg';
   const TABELA_TOKEN = '[TABELA_PRECOS]';
 
@@ -795,12 +809,6 @@ async function flushSession(sessionId: string): Promise<void> {
         }
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);
-
-      // Último bloco — verifica se há resumo de pendência
-      if (i === mensagens.length - 1) {
-        const allText = mensagens.join('\n');
-        void handlePendingActions(sessionId, allText);
-      }
 
       // Escalação genérica: pra cada motivo capturado, notifica Mariana
       // DESABILITADO: essas notificações estavam vazando para clientes

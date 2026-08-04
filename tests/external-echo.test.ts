@@ -68,6 +68,12 @@ describe('isKnownCrmTemplate', () => {
     expect(isKnownCrmTemplate(texto)).toBe(true);
   });
 
+  it('reconhece cancelamento automático do CRM', () => {
+    const texto =
+      'Oi, Ana! Seu agendamento de Alongamento com Mariana, dia 04/08 às 10:00, foi cancelado.';
+    expect(isKnownCrmTemplate(texto)).toBe(true);
+  });
+
   it('texto qualquer da Mariana não bate com nenhum template', () => {
     expect(isKnownCrmTemplate('Oi! Vou assumir o atendimento por aqui, um minuto.')).toBe(false);
   });

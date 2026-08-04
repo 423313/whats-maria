@@ -31,12 +31,12 @@ const envSchema = z.object({
 
   // Eco cruzado WAHA (CRM) → Flora: o CRM chama POST /internal/outbound-echo
   // logo após cada envio automático, autenticado por este segredo compartilhado.
-  // EXTERNAL_ECHO_ENABLED controla se esse registro é CONSULTADO na hora de decidir
-  // se ativa a janela manual da Mariana. Default 'off': reproduz o comportamento
-  // atual exato até o lado CRM estar deployado e confirmado — rollback instantâneo
-  // sem deploy, só trocando a variável.
+  // EXTERNAL_ECHO_ENABLED controla se os sinais de automação do CRM são usados na
+  // hora de decidir se ativa a janela manual da Mariana. O padrão é 'on' porque
+  // CRM e Flora compartilham o mesmo número e uma mensagem automática não pode
+  // silenciar o atendimento. Ainda é possível desligar emergencialmente por env.
   INTERNAL_ECHO_SECRET: z.string().optional(),
-  EXTERNAL_ECHO_ENABLED: z.enum(['on', 'off']).default('off'),
+  EXTERNAL_ECHO_ENABLED: z.enum(['on', 'off']).default('on'),
 
   // Token de origem do webhook da Evolution (?token=... na URL cadastrada no
   // Manager). Opcional: sem ele, o webhook aceita qualquer chamador (mesmo

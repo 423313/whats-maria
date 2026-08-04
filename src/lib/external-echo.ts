@@ -30,6 +30,7 @@ const CRM_TEMPLATE_MARKERS = [
   'que a gente não te vê por aqui e ficamos com saudade', // reativação
   'Aqui está o comprovante do seu atendimento no Studio Mariana Castro', // comprovante
   'Seu agendamento foi confirmado:', // confirmação
+  'foi cancelado.', // cancelamento
 ];
 
 export function isKnownCrmTemplate(text: string | null | undefined): boolean {

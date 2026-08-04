@@ -11,9 +11,7 @@ import {
   buildAvailabilityContext,
   invalidateAvailabilityCache,
 } from '../services/calendar-availability.js';
-import { getEvolutionClient } from '../lib/evolution.js';
-import { registerFloraEcho } from '../lib/echo-registry.js';
-import { persistAssistantMessage } from '../services/chat-repository.js';
+import { sendAutomatedAssistantMessage } from '../services/outbound-message.js';
 import { invalidateAgentConfigCache } from '../services/agent-config.js';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,21 +37,7 @@ export function containsEscalationMarker(text: string): boolean {
  * conteúdo em resolveIsFloraEcho).
  */
 async function sendManualMessage(sessionId: string, text: string): Promise<string | null> {
-  const evo = getEvolutionClient();
-  const result = await evo.sendText(env.EVOLUTION_INSTANCE, sessionId, text);
-  if (result.messageId) {
-    registerFloraEcho(result.messageId);
-  }
-  await persistAssistantMessage({
-    sessionId,
-    instance: env.EVOLUTION_INSTANCE,
-    role: 'assistant',
-    content: text,
-    status: 'sent',
-    evolutionMessageId: result.messageId ?? null,
-    pushName: 'Admin (painel)',
-  });
-  return result.messageId ?? null;
+  return sendAutomatedAssistantMessage({ sessionId, text, pushName: 'Admin (painel)' });
 }
 
 // Tokens críticos que NÃO podem ser removidos sem confirmação explícita.

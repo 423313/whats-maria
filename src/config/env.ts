@@ -36,6 +36,7 @@ const envSchema = z.object({
   // CRM e Flora compartilham o mesmo número e uma mensagem automática não pode
   // silenciar o atendimento. Ainda é possível desligar emergencialmente por env.
   INTERNAL_ECHO_SECRET: z.string().optional(),
+  CRM_COMMAND_SECRET: z.string().optional(),
   EXTERNAL_ECHO_ENABLED: z.enum(['on', 'off']).default('on'),
 
   // Token de origem do webhook da Evolution (?token=... na URL cadastrada no

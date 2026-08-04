@@ -20,7 +20,12 @@ vi.mock('../src/lib/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { diffBusySources, fetchBusyFromCrm, type BusyInterval } from '../src/services/calendar-availability.js';
+import {
+  checkConsecutiveSlotsFree,
+  diffBusySources,
+  fetchBusyFromCrm,
+  type BusyInterval,
+} from '../src/services/calendar-availability.js';
 
 describe('fetchBusyFromCrm', () => {
   afterEach(() => {
@@ -112,5 +117,41 @@ describe('diffBusySources', () => {
     expect(diff.onlyCrm.length).toBeGreaterThan(0);
     expect(diff.onlyCrm[0]).toEqual({ day: '09/06', slot: '11:00' });
     expect(diff.onlyGcal).toEqual([]);
+  });
+});
+
+describe('checkConsecutiveSlotsFree', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('consulta a ocupacao do CRM e identifica slot ocupado', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        ocupados: [{
+          inicio_ms: Date.parse('2026-08-05T09:00:00-03:00'),
+          fim_ms: Date.parse('2026-08-05T12:40:00-03:00'),
+        }],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await checkConsecutiveSlotsFree('05/08', '11:00', 2, 2026);
+
+    expect(result).toEqual({ status: 'insufficient', freeSlots: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0]?.[0] as URL).pathname).toBe('/api/flora/ocupacao');
+  });
+
+  it('retorna unverified quando o CRM nao pode ser consultado', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('CRM indisponivel')));
+
+    await expect(checkConsecutiveSlotsFree('05/08', '11:00', 2, 2026)).resolves.toEqual({
+      status: 'unverified',
+      reason: 'CRM indisponivel',
+    });
   });
 });

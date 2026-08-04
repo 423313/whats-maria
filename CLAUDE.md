@@ -315,8 +315,9 @@ A Mariana/admin pode escrever e enviar mensagens direto pela conversa (composito
 | `OPENAI_API_KEY` | Sim | Chave da OpenAI (fallback se não configurada em `agent_configs`) |
 | `MARIANA_NOTIFY_PHONE` | Recomendada | Número da Mariana para notificações de agendamento (`554196137916`) |
 | `ADMIN_PASSWORD` | Recomendada | Senha do painel admin |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | Opcional | JSON do service account Google (para agenda) |
-| `GOOGLE_CALENDAR_ID` | Opcional | ID do calendário da Mariana |
+| `CRM_BASE_URL` | Obrigatória | URL do CRM operacional usado pela agenda da Flora |
+| `CRM_API_SECRET` | Obrigatória | Mesmo segredo configurado como `FLORA_API_SECRET` no CRM |
+| `AGENDA_SOURCE` | Obrigatória | Deve ser `crm`; a Flora não consulta Google Calendar |
 | `REVIEW_NOTIFY_PHONE` | Opcional | Número para receber relatório semanal |
 | `AGENT_BUFFER_SWEEPER_MS` | Opcional | Intervalo do buffer sweeper (padrão: 20.000ms) |
 | `PORT` | Opcional | Porta HTTP (padrão: 3000) |

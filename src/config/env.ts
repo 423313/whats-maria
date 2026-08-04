@@ -48,6 +48,7 @@ const envSchema = z.object({
   // mesmo segredo como FLORA_API_SECRET do lado dele — nomes diferentes, valor igual).
   CRM_CENTRAL_ENABLED: z.enum(['on', 'off']).default('off'),
   CRM_OUTBOX_SWEEPER_MS: z.coerce.number().int().positive().default(30_000),
+  CRM_REMINDER_SWEEPER_MS: z.coerce.number().int().positive().default(300_000),
   // AGENDA_SOURCE escolhe a fonte de ocupação: 'gcal' (padrão, comportamento atual,
   // Google Calendar), 'union' (as duas fontes, usado durante a convivência pós-corte
   // da Belasis) ou 'crm' (só o CRM, destino final). AGENDA_UNION_REQUIRED só importa

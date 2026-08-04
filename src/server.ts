@@ -16,6 +16,10 @@ import { startFollowupSweeper, stopFollowupSweeper } from './services/followup.j
 import { startMarianaMonitor, stopMarianaMonitor } from './services/mariana-monitor.js';
 import { startWeeklyReviewSweeper, stopWeeklyReviewSweeper } from './services/weekly-review.js';
 import { startCrmOutboxSweeper, stopCrmOutboxSweeper } from './services/crm-requests.js';
+import {
+  startCrmReminderSweeper,
+  stopCrmReminderSweeper,
+} from './services/crm-reminder-sweeper.js';
 import { runMigrations } from './lib/migrations.js';
 
 async function main() {
@@ -44,6 +48,7 @@ async function main() {
   startFollowupSweeper();
   startMarianaMonitor();
   startWeeklyReviewSweeper();
+  startCrmReminderSweeper();
 
   try {
     const address = await app.listen({ port: env.PORT, host: '0.0.0.0' });
@@ -58,6 +63,7 @@ async function main() {
     try {
       await app.close();
       await stopCrmOutboxSweeper();
+      await stopCrmReminderSweeper();
       stopBufferSweeper();
       stopFollowupSweeper();
       stopMarianaMonitor();

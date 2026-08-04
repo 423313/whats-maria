@@ -13,6 +13,7 @@ import { checkConsecutiveSlotsFree } from './calendar-availability.js';
 import { saveClientName } from './chat-repository.js';
 import { saoPauloParts, saoPauloDateStartToUtcIso } from '../lib/time.js';
 import { enqueueCrmRequest } from './crm-requests.js';
+import { decidirCanais } from './escalations.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -142,6 +143,7 @@ export async function handlePendingActions(
   if (type === 'agendamento' && pendingActionId) {
     const dataHorario = fields['data_e_horário_solicitados'] ?? '';
     const requestedStartIso = buildRequestedStartIso(dataHorario);
+    let crmFalhou = false;
     try {
       await enqueueCrmRequest({
         eventoId: pendingActionId,
@@ -159,12 +161,21 @@ export async function handlePendingActions(
         },
       });
     } catch (error) {
+      crmFalhou = true;
       logger.error(
         { err: sanitizeCrmError(error), session_id: sessionId, evento_id: pendingActionId },
         'crm outbox: enfileiramento ou entrega falhou, fluxo da pendência preservado',
       );
     }
+
+    const canais = decidirCanais(env.MARIANA_NOTIFY_MODE);
+    if (canais.whatsappPessoal === false ||
+      (canais.whatsappPessoal === 'somente_erro' && !crmFalhou)) {
+      return;
+    }
   }
+
+  if (decidirCanais(env.MARIANA_NOTIFY_MODE).whatsappPessoal === false) return;
 
   // Valida janela de disponibilidade para agendamentos
   let slotWarning: string | null = null;

@@ -22,6 +22,7 @@ const envSchema = z.object({
 
   REVIEW_NOTIFY_PHONE: z.string().optional(),
   MARIANA_NOTIFY_PHONE: z.string().optional(),
+  MARIANA_NOTIFY_MODE: z.enum(['parallel', 'fallback', 'off']).default('parallel'),
 
   // Google Calendar — leitura da agenda da Mariana sincronizada pelo belasis-sync.
   // Ambas opcionais: se ausentes, o agente continua funcionando, só não tem

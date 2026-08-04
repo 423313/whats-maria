@@ -13,6 +13,16 @@ export type EscalationType =
   | 'outro';
 
 export type EscalationPriority = 'baixa' | 'normal' | 'urgente';
+export type MarianaNotifyMode = 'parallel' | 'fallback' | 'off';
+
+export function decidirCanais(modo: MarianaNotifyMode): {
+  crm: true;
+  whatsappPessoal: true | 'somente_erro' | false;
+} {
+  if (modo === 'off') return { crm: true, whatsappPessoal: false };
+  if (modo === 'fallback') return { crm: true, whatsappPessoal: 'somente_erro' };
+  return { crm: true, whatsappPessoal: true };
+}
 
 export interface ExtractedEscalation {
   motivo: string;

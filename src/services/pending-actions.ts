@@ -12,6 +12,7 @@ import { buildPendingBlockRegex } from '../lib/pending-block.js';
 import { checkConsecutiveSlotsFree } from './calendar-availability.js';
 import { saveClientName } from './chat-repository.js';
 import { saoPauloParts, saoPauloDateStartToUtcIso } from '../lib/time.js';
+import { enqueueCrmRequest } from './crm-requests.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,6 +37,26 @@ function parseFields(block: string): Record<string, string> {
 
 function extractClientName(fields: Record<string, string>): string {
   return fields['nome_da_cliente'] ?? fields['nome'] ?? '';
+}
+
+function resolveRequestedYear(dateDDMM: string): number {
+  const hoje = saoPauloParts();
+  const month = Number(dateDDMM.split('/')[1] ?? '0');
+  return month < hoje.month ? hoje.year + 1 : hoje.year;
+}
+
+function buildRequestedStartIso(dataHorario: string): string | null {
+  const timeMatch = dataHorario.match(/(\d{2}):(\d{2})/);
+  const dateMatch = dataHorario.match(/\((\d{2})\/(\d{2})\)/);
+  if (!timeMatch || !dateMatch) return null;
+
+  const year = resolveRequestedYear(`${dateMatch[1]}/${dateMatch[2]}`);
+  const day = dateMatch[1];
+  const month = dateMatch[2];
+  const hour = timeMatch[1];
+  const minute = timeMatch[2];
+
+  return `${year}-${month}-${day}T${hour}:${minute}:00-03:00`;
 }
 
 /**
@@ -95,15 +116,41 @@ export async function handlePendingActions(
     .gte('created_at', saoPauloDateStartToUtcIso(today))
     .maybeSingle();
 
+  let pendingActionId = existing?.id ?? null;
   if (!existing) {
-    await supabase.from('pending_actions').insert({
-      session_id: sessionId,
-      type,
-      client_name: clientName || null,
-      client_phone: phone,
-      summary: rawBlock.trim(),
-      fields,
-      status: 'pendente',
+    const { data: inserted } = await supabase
+      .from('pending_actions')
+      .insert({
+        session_id: sessionId,
+        type,
+        client_name: clientName || null,
+        client_phone: phone,
+        summary: rawBlock.trim(),
+        fields,
+        status: 'pendente',
+      })
+      .select('id')
+      .single();
+    pendingActionId = inserted?.id ?? null;
+  }
+
+  if (type === 'agendamento' && pendingActionId) {
+    const dataHorario = fields['data_e_horário_solicitados'] ?? '';
+    const requestedStartIso = buildRequestedStartIso(dataHorario);
+    await enqueueCrmRequest({
+      eventoId: pendingActionId,
+      assunto: `${sessionId}:agendamento:${dataHorario}`,
+      pendingActionId,
+      payload: {
+        acao_flora_id: pendingActionId,
+        sessao: sessionId,
+        tipo: 'agendamento',
+        motivo: 'agendamento',
+        nome: clientName,
+        telefone: phone,
+        servico: fields['procedimento'] ?? '',
+        inicio_solicitado: requestedStartIso,
+      },
     });
   }
 
@@ -120,9 +167,7 @@ export async function handlePendingActions(
       // dezembro (dentro do horizonte de 30 dias da Flora) tem mês (1) menor
       // que o mês atual (12) — é sempre ano seguinte, nunca o mesmo ano. Sem
       // isso, validava 05/01 do ano ATUAL (já passado) e checava o dia errado.
-      const hoje = saoPauloParts();
-      const mesSolicitado = Number(dateMatch[1].split('/')[1]);
-      const currentYear = mesSolicitado < hoje.month ? hoje.year + 1 : hoje.year;
+      const currentYear = resolveRequestedYear(dateMatch[1]);
       const minSlots = serviceToMinSlots(service);
       try {
         const { valid, freeSlots } = await checkConsecutiveSlotsFree(

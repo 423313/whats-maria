@@ -15,6 +15,7 @@ import {
 import { startFollowupSweeper, stopFollowupSweeper } from './services/followup.js';
 import { startMarianaMonitor, stopMarianaMonitor } from './services/mariana-monitor.js';
 import { startWeeklyReviewSweeper, stopWeeklyReviewSweeper } from './services/weekly-review.js';
+import { startCrmOutboxSweeper, stopCrmOutboxSweeper } from './services/crm-requests.js';
 import { runMigrations } from './lib/migrations.js';
 
 async function main() {
@@ -38,6 +39,7 @@ async function main() {
   await app.register(internalRoutes);
 
   initChatbot();
+  startCrmOutboxSweeper();
   startBufferSweeper();
   startFollowupSweeper();
   startMarianaMonitor();
@@ -55,6 +57,7 @@ async function main() {
     logger.info({ signal }, 'shutdown signal received');
     try {
       await app.close();
+      stopCrmOutboxSweeper();
       stopBufferSweeper();
       stopFollowupSweeper();
       stopMarianaMonitor();

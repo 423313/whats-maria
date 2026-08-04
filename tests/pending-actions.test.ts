@@ -6,6 +6,10 @@ const mockEnv = vi.hoisted(() => ({
   EVOLUTION_INSTANCE: undefined,
 }));
 
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+}));
+
 const mockPendingDb = vi.hoisted(() => {
   const state = {
     existingId: null as string | null,
@@ -67,7 +71,7 @@ vi.mock('../src/lib/supabase.js', () => ({
   supabase: { from: mockPendingDb.from },
 }));
 vi.mock('../src/lib/logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  logger: mockLogger,
 }));
 vi.mock('../src/lib/evolution.js', () => ({
   getEvolutionClient: vi.fn(),
@@ -101,6 +105,7 @@ beforeEach(() => {
   mockCheckConsecutiveSlotsFree.mockClear();
   mockSaveClientName.mockClear();
   mockEnqueueCrmRequest.mockClear();
+  mockLogger.error.mockClear();
 });
 
 afterEach(() => {
@@ -205,5 +210,27 @@ describe('handlePendingActions', () => {
       eventoId: 'pending-existing-id',
       pendingActionId: 'pending-existing-id',
     }));
+  });
+
+  it('isola falha do CRM e preserva validação de slot e aviso', async () => {
+    mockEnv.MARIANA_NOTIFY_PHONE = '5511999999999';
+    mockEnv.EVOLUTION_INSTANCE = 'flora';
+    mockEnqueueCrmRequest.mockRejectedValueOnce(new Error('CRM token secreto\nstack interna'));
+    mockCheckConsecutiveSlotsFree.mockResolvedValueOnce({ valid: false, freeSlots: 1 });
+
+    await handlePendingActions('5511999999999@s.whatsapp.net', [
+      [
+        '--- SOLICITAÇÃO DE AGENDAMENTO ---',
+        'Nome: Ana',
+        'Procedimento: Blindagem',
+        'Data e horário solicitados: 14:00 (05/08)',
+      ].join('\n'),
+    ]);
+
+    expect(mockCheckConsecutiveSlotsFree).toHaveBeenCalledTimes(1);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: 'CRM token secreto stack interna' }),
+      expect.stringMatching(/crm/i),
+    );
   });
 });

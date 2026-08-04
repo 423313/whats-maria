@@ -57,7 +57,7 @@ async function main() {
     logger.info({ signal }, 'shutdown signal received');
     try {
       await app.close();
-      stopCrmOutboxSweeper();
+      await stopCrmOutboxSweeper();
       stopBufferSweeper();
       stopFollowupSweeper();
       stopMarianaMonitor();

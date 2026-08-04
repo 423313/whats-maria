@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { randomUUID } from 'node:crypto';
 import { logger } from '../lib/logger.js';
 import { supabase } from '../lib/supabase.js';
 
@@ -15,6 +16,8 @@ interface CrmOutboxRow {
   pending_action_id: string | null;
   payload: Record<string, unknown>;
   tentativas: number;
+  claim_token?: string | null;
+  claim_until?: string | null;
 }
 
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 1_800_000] as const;
@@ -22,6 +25,7 @@ const MAX_BATCH_SIZE = 25;
 
 let sweeperHandle: NodeJS.Timeout | null = null;
 let sweepInFlight = false;
+let sweepPromise: Promise<void> | null = null;
 
 function crmCentralEnabled(): boolean {
   return env.CRM_CENTRAL_ENABLED === 'on';
@@ -61,42 +65,69 @@ async function parseJsonSafely(response: Response): Promise<unknown> {
   }
 }
 
+async function updateOutbox(eventoId: string, patch: Record<string, unknown>): Promise<void> {
+  const { error } = await supabase
+    .from('crm_request_outbox')
+    .update(patch)
+    .eq('evento_id', eventoId);
+  if (error) {
+    const sanitized = sanitizeError(error.message);
+    logger.error({ err: sanitized, evento_id: eventoId }, 'crm outbox: update falhou');
+    throw new Error(`crm outbox update failed: ${sanitized}`);
+  }
+}
+
 async function markDelivered(row: CrmOutboxRow, response: Response): Promise<void> {
   const body = await parseJsonSafely(response);
   const nowIso = new Date().toISOString();
-  await supabase
-    .from('crm_request_outbox')
-    .update({
+  await updateOutbox(row.evento_id, {
       status: 'entregue',
       crm_solicitacao_id: extractCrmSolicitacaoId(body),
       entregue_em: nowIso,
       ultimo_erro: null,
-    })
-    .eq('evento_id', row.evento_id);
+      claim_token: null,
+      claim_until: null,
+    });
 }
 
 async function markRetry(row: CrmOutboxRow, errorText: string): Promise<void> {
   const nextAttemptNumber = row.tentativas + 1;
   const nextRetryIso = new Date(Date.now() + nextRetryDelayMs(nextAttemptNumber)).toISOString();
-  await supabase
-    .from('crm_request_outbox')
-    .update({
+  await updateOutbox(row.evento_id, {
       tentativas: nextAttemptNumber,
       ultimo_erro: sanitizeError(errorText),
       proxima_tentativa_em: nextRetryIso,
-    })
-    .eq('evento_id', row.evento_id);
+      claim_token: null,
+      claim_until: null,
+    });
 }
 
 async function markPermanentError(row: CrmOutboxRow, errorText: string): Promise<void> {
-  await supabase
-    .from('crm_request_outbox')
-    .update({
+  await updateOutbox(row.evento_id, {
       status: 'erro_permanente',
       tentativas: row.tentativas + 1,
       ultimo_erro: sanitizeError(errorText),
-    })
-    .eq('evento_id', row.evento_id);
+      claim_token: null,
+      claim_until: null,
+    });
+}
+
+async function claimRow(row: CrmOutboxRow): Promise<CrmOutboxRow | null> {
+  const token = randomUUID();
+  const until = new Date(Date.now() + 60_000).toISOString();
+  const { data, error } = await supabase
+    .from('crm_request_outbox')
+    .update({ claim_token: token, claim_until: until })
+    .eq('evento_id', row.evento_id)
+    .eq('status', 'pendente')
+    .or(`claim_token.is.null,claim_until.lt.${new Date().toISOString()}`)
+    .select('evento_id, assunto_chave, pending_action_id, payload, tentativas, claim_token, claim_until');
+  if (error) {
+    const sanitized = sanitizeError(error.message);
+    logger.error({ err: sanitized, evento_id: row.evento_id }, 'crm outbox: claim falhou');
+    throw new Error(`crm outbox claim failed: ${sanitized}`);
+  }
+  return Array.isArray(data) && data.length > 0 ? data[0] as CrmOutboxRow : null;
 }
 
 async function postToCrm(row: CrmOutboxRow): Promise<Response> {
@@ -144,7 +175,7 @@ export async function deliverCrmOutbox(limit: number): Promise<number> {
   const batchSize = Math.min(Math.max(limit, 1), MAX_BATCH_SIZE);
   const { data, error } = await supabase
     .from('crm_request_outbox')
-    .select('evento_id, assunto_chave, pending_action_id, payload, tentativas')
+    .select('evento_id, assunto_chave, pending_action_id, payload, tentativas, claim_token, claim_until')
     .eq('status', 'pendente')
     .lte('proxima_tentativa_em', new Date().toISOString())
     .order('proxima_tentativa_em', { ascending: true })
@@ -156,7 +187,9 @@ export async function deliverCrmOutbox(limit: number): Promise<number> {
 
   let delivered = 0;
   for (const row of (data ?? []) as CrmOutboxRow[]) {
-    if (await deliverRow(row)) delivered++;
+    const claimed = await claimRow(row);
+    if (!claimed) continue;
+    if (await deliverRow(claimed)) delivered++;
   }
   return delivered;
 }
@@ -193,7 +226,8 @@ export function startCrmOutboxSweeper(): void {
   sweeperHandle = setInterval(() => {
     if (sweepInFlight) return;
     sweepInFlight = true;
-    deliverCrmOutbox(MAX_BATCH_SIZE)
+    sweepPromise = deliverCrmOutbox(MAX_BATCH_SIZE)
+      .then(() => undefined)
       .catch((error) => {
         logger.error(
           { err: sanitizeError(error) },
@@ -202,14 +236,15 @@ export function startCrmOutboxSweeper(): void {
       })
       .finally(() => {
         sweepInFlight = false;
+        sweepPromise = null;
       });
   }, env.CRM_OUTBOX_SWEEPER_MS);
 
   logger.info({ interval_ms: env.CRM_OUTBOX_SWEEPER_MS }, 'crm outbox sweeper iniciado');
 }
 
-export function stopCrmOutboxSweeper(): void {
-  if (!sweeperHandle) return;
-  clearInterval(sweeperHandle);
+export async function stopCrmOutboxSweeper(): Promise<void> {
+  if (sweeperHandle) clearInterval(sweeperHandle);
   sweeperHandle = null;
+  if (sweepPromise) await sweepPromise;
 }

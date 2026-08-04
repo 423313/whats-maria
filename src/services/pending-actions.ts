@@ -59,6 +59,11 @@ function buildRequestedStartIso(dataHorario: string): string | null {
   return `${year}-${month}-${day}T${hour}:${minute}:00-03:00`;
 }
 
+function sanitizeCrmError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
 /**
  * Procura os blocos estruturados em cada mensagem SEPARADAMENTE (nunca no join
  * de todas). Isso é o que garante a paridade com a remoção em flushSession
@@ -137,21 +142,28 @@ export async function handlePendingActions(
   if (type === 'agendamento' && pendingActionId) {
     const dataHorario = fields['data_e_horário_solicitados'] ?? '';
     const requestedStartIso = buildRequestedStartIso(dataHorario);
-    await enqueueCrmRequest({
-      eventoId: pendingActionId,
-      assunto: `${sessionId}:agendamento:${dataHorario}`,
-      pendingActionId,
-      payload: {
-        acao_flora_id: pendingActionId,
-        sessao: sessionId,
-        tipo: 'agendamento',
-        motivo: 'agendamento',
-        nome: clientName,
-        telefone: phone,
-        servico: fields['procedimento'] ?? '',
-        inicio_solicitado: requestedStartIso,
-      },
-    });
+    try {
+      await enqueueCrmRequest({
+        eventoId: pendingActionId,
+        assunto: `${sessionId}:agendamento:${dataHorario}`,
+        pendingActionId,
+        payload: {
+          acao_flora_id: pendingActionId,
+          sessao: sessionId,
+          tipo: 'agendamento',
+          motivo: 'agendamento',
+          nome: clientName,
+          telefone: phone,
+          servico: fields['procedimento'] ?? '',
+          inicio_solicitado: requestedStartIso,
+        },
+      });
+    } catch (error) {
+      logger.error(
+        { err: sanitizeCrmError(error), session_id: sessionId, evento_id: pendingActionId },
+        'crm outbox: enfileiramento ou entrega falhou, fluxo da pendência preservado',
+      );
+    }
   }
 
   // Valida janela de disponibilidade para agendamentos

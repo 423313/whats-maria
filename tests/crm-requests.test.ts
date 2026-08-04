@@ -12,6 +12,8 @@ interface OutboxRow {
   ultimo_erro: string | null;
   criada_em: string;
   entregue_em: string | null;
+  claim_token: string | null;
+  claim_until: string | null;
 }
 
 const mockEnv = vi.hoisted(() => ({
@@ -23,6 +25,7 @@ const mockEnv = vi.hoisted(() => ({
 
 const mockDb = vi.hoisted(() => {
   const rows: OutboxRow[] = [];
+  let failUpdate = false;
   const insertMock = vi.fn(async (input: Partial<OutboxRow>) => {
     if (rows.some((row) => row.evento_id === input.evento_id)) {
       return { data: null, error: { code: '23505', message: 'duplicate key value' } };
@@ -39,6 +42,8 @@ const mockDb = vi.hoisted(() => {
       ultimo_erro: null,
       criada_em: new Date().toISOString(),
       entregue_em: null,
+      claim_token: null,
+      claim_until: null,
     });
     return { data: null, error: null };
   });
@@ -50,6 +55,7 @@ const mockDb = vi.hoisted(() => {
       .map((row) => ({ ...row, payload: { ...row.payload } }))
   ));
   const updateMock = vi.fn(async (eventoId: string, patch: Partial<OutboxRow>) => {
+    if (failUpdate) return { data: null, error: { message: 'database indisponível' } };
     const row = rows.find((item) => item.evento_id === eventoId);
     if (row) Object.assign(row, patch);
     return { data: row ?? null, error: null };
@@ -76,7 +82,27 @@ const mockDb = vi.hoisted(() => {
         return builder;
       },
       update: (patch: Partial<OutboxRow>) => ({
-        eq: (_field: string, value: string) => updateMock(value, patch),
+        eq: (_field: string, value: string) => {
+          if (!patch.claim_token) return updateMock(value, patch);
+          const chain = {
+            eq: (_nextField: string, _nextValue: unknown) => chain,
+            is: (_nextField: string, _nextValue: unknown) => chain,
+            or: (_expression: string) => chain,
+            select: async () => {
+              const row = rows.find((item) => item.evento_id === value);
+              if (row && patch.claim_token && row.status === 'pendente') {
+                if (!row.claim_until || new Date(row.claim_until).getTime() <= Date.now()) {
+                  Object.assign(row, patch);
+                  return { data: [{ ...row }], error: null };
+                }
+                return { data: [], error: null };
+              }
+              const result = await updateMock(value, patch);
+              return { data: result.data ? [result.data] : [], error: result.error };
+            },
+          };
+          return chain;
+        },
       }),
     };
   }
@@ -86,12 +112,14 @@ const mockDb = vi.hoisted(() => {
     insertMock,
     selectMock,
     updateMock,
+    setFailUpdate(value: boolean) { failUpdate = value; },
     from,
     reset() {
       rows.length = 0;
       insertMock.mockClear();
       selectMock.mockClear();
       updateMock.mockClear();
+      failUpdate = false;
     },
   };
 });
@@ -108,6 +136,7 @@ describe('crm-requests outbox', () => {
   beforeEach(() => {
     vi.resetModules();
     mockDb.reset();
+    mockEnv.CRM_CENTRAL_ENABLED = 'on';
   });
 
   afterEach(() => {
@@ -149,6 +178,18 @@ describe('crm-requests outbox', () => {
     const body = JSON.parse(String(requestInit.body));
     expect(body.evento_id).toBe('pending-1');
     expect(body.acao_flora_id).toBe('pending-1');
+  });
+
+  it('não chama o CRM quando CRM_CENTRAL_ENABLED está off', async () => {
+    mockEnv.CRM_CENTRAL_ENABLED = 'off';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { enqueueCrmRequest } = await import('../src/services/crm-requests.js');
+
+    await enqueueCrmRequest({ eventoId: 'disabled-1', assunto: 'off', pendingActionId: 'disabled-1', payload: {} });
+
+    expect(mockDb.rows).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('não duplica linhas ao reenfileirar o mesmo evento_id', async () => {
@@ -337,5 +378,52 @@ describe('crm-requests outbox', () => {
     vi.setSystemTime(new Date('2026-08-04T12:12:30Z'));
     await deliverCrmOutbox(1);
     expect(new Date(String(mockDb.rows[0]?.proxima_tentativa_em)).getTime() - Date.now()).toBe(1_800_000);
+  });
+
+  it('não trata falha de update do Supabase como entrega concluída', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('seed')));
+    const { deliverCrmOutbox, enqueueCrmRequest } = await import('../src/services/crm-requests.js');
+    await enqueueCrmRequest({ eventoId: 'update-fail-1', assunto: 'falha', pendingActionId: 'update-fail-1', payload: {} });
+    mockDb.rows[0]!.proxima_tentativa_em = new Date().toISOString();
+    mockDb.setFailUpdate(true);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 201, json: async () => ({}) }));
+
+    await expect(deliverCrmOutbox(1)).rejects.toThrow('database indisponível');
+  });
+
+  it('protege a mesma linha contra dois POST concorrentes', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('seed')));
+    const { deliverCrmOutbox, enqueueCrmRequest } = await import('../src/services/crm-requests.js');
+    await enqueueCrmRequest({ eventoId: 'lock-1', assunto: 'lock', pendingActionId: 'lock-1', payload: {} });
+    mockDb.rows[0]!.proxima_tentativa_em = new Date().toISOString();
+    let release!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = deliverCrmOutbox(1);
+    const second = deliverCrmOutbox(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    release({ status: 201, json: async () => ({}) } as Response);
+    await Promise.all([first, second]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stopCrmOutboxSweeper aguarda a entrega em andamento', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('seed')));
+    const { enqueueCrmRequest, startCrmOutboxSweeper, stopCrmOutboxSweeper } = await import('../src/services/crm-requests.js');
+    await enqueueCrmRequest({ eventoId: 'shutdown-1', assunto: 'shutdown', pendingActionId: 'shutdown-1', payload: {} });
+    let release!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { release = resolve; })));
+    startCrmOutboxSweeper();
+    await vi.advanceTimersByTimeAsync(30_000);
+    const stopping = stopCrmOutboxSweeper();
+    let settled = false;
+    void stopping.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release({ status: 201, json: async () => ({}) } as Response);
+    await stopping;
+    expect(mockDb.rows[0]?.status).toBe('entregue');
   });
 });

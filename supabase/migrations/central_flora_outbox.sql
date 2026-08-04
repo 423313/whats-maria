@@ -12,3 +12,8 @@ create table if not exists public.crm_request_outbox (
   entregue_em timestamptz
 );
 create index crm_request_outbox_retry_idx on public.crm_request_outbox (proxima_tentativa_em) where status = 'pendente';
+alter table public.crm_request_outbox
+  add column if not exists claim_token uuid,
+  add column if not exists claim_until timestamptz;
+create index if not exists crm_request_outbox_claim_idx
+  on public.crm_request_outbox (claim_until) where status = 'pendente';

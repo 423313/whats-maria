@@ -162,7 +162,7 @@ describe('handleEscalations', () => {
     expect(mockEnqueueCrmRequest).toHaveBeenNthCalledWith(1, {
       eventoId: 'uuid-duvida',
       assunto: '5511999999999@s.whatsapp.net:duvida',
-      pendingActionId: 'uuid-duvida',
+      pendingActionId: null,
       payload: {
         acao_flora_id: 'uuid-duvida',
         sessao: '5511999999999@s.whatsapp.net',
@@ -175,7 +175,7 @@ describe('handleEscalations', () => {
     expect(mockEnqueueCrmRequest).toHaveBeenNthCalledWith(2, {
       eventoId: 'uuid-pagamento',
       assunto: '5511999999999@s.whatsapp.net:atendimento_humano',
-      pendingActionId: 'uuid-pagamento',
+      pendingActionId: null,
       payload: {
         acao_flora_id: 'uuid-pagamento',
         sessao: '5511999999999@s.whatsapp.net',
@@ -188,7 +188,7 @@ describe('handleEscalations', () => {
     expect(mockEnqueueCrmRequest).toHaveBeenNthCalledWith(3, {
       eventoId: 'uuid-outro',
       assunto: '5511999999999@s.whatsapp.net:pagamento',
-      pendingActionId: 'uuid-outro',
+      pendingActionId: null,
       payload: {
         acao_flora_id: 'uuid-outro',
         sessao: '5511999999999@s.whatsapp.net',
@@ -197,35 +197,34 @@ describe('handleEscalations', () => {
         motivo: 'pagamento',
       },
     });
+    expect(mockOutboxDb.state.insertedRows).toHaveLength(0);
   });
 
-  it('reutiliza a outbox ativa por assunto, atualiza o payload e não cria nova linha', async () => {
-    mockOutboxDb.state.existingActiveBySubject.set(
-      '5511888888888@s.whatsapp.net:pagamento',
-      { evento_id: 'evento-existente' },
-    );
-
+  it('deduplica assuntos repetidos no mesmo lote e delega a idempotência da outbox ao enqueue', async () => {
     await handleEscalations({
       sessionId: '5511888888888@s.whatsapp.net',
       userText: 'Quero reembolso do meu sinal',
-      assistantMessages: ['Vou pedir pra Mariana ver isso.\n[ESCALAR_MARIANA:reembolso]'],
+      assistantMessages: [
+        'Vou pedir pra Mariana ver isso.\n[ESCALAR_MARIANA:reembolso]',
+        'Ainda sobre isso.\n[ESCALAR_MARIANA:pagamento]',
+      ],
     });
 
-    expect(mockEnqueueCrmRequest).not.toHaveBeenCalled();
-    expect(mockOutboxDb.state.updatedRows).toEqual([
-      {
-        eventoId: 'evento-existente',
-        patch: {
-          payload: {
-            acao_flora_id: 'evento-existente',
-            sessao: '5511888888888@s.whatsapp.net',
-            tipo: 'pagamento',
-            prioridade: 'normal',
-            motivo: 'reembolso',
-          },
-        },
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith({
+      eventoId: 'uuid-duvida',
+      assunto: '5511888888888@s.whatsapp.net:pagamento',
+      pendingActionId: null,
+      payload: {
+        acao_flora_id: 'uuid-duvida',
+        sessao: '5511888888888@s.whatsapp.net',
+        tipo: 'pagamento',
+        prioridade: 'normal',
+        motivo: 'pagamento',
       },
-    ]);
+    });
+    expect(mockOutboxDb.state.insertedRows).toHaveLength(0);
+    expect(mockOutboxDb.state.updatedRows).toHaveLength(0);
   });
 
   it('isola falha da outbox sem rejeitar o atendimento e sanitiza o erro no log', async () => {

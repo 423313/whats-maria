@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase.js';
 export interface EnqueueCrmRequestInput {
   eventoId: string;
   assunto: string;
-  pendingActionId: string;
+  pendingActionId: string | null;
   payload: Record<string, unknown>;
 }
 
@@ -18,6 +18,13 @@ interface CrmOutboxRow {
   tentativas: number;
   claim_token?: string | null;
   claim_until?: string | null;
+}
+
+interface PendingOutboxRow {
+  evento_id: string;
+  assunto_chave: string;
+  pending_action_id: string | null;
+  payload: Record<string, unknown>;
 }
 
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 1_800_000] as const;
@@ -48,6 +55,13 @@ function buildRequestBody(row: CrmOutboxRow): Record<string, unknown> {
   };
 }
 
+function patchPayloadEventoId(payload: Record<string, unknown>, eventoId: string): Record<string, unknown> {
+  return {
+    ...payload,
+    acao_flora_id: eventoId,
+  };
+}
+
 function extractCrmSolicitacaoId(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null;
   const asRecord = body as Record<string, unknown>;
@@ -75,6 +89,37 @@ async function updateOutbox(eventoId: string, patch: Record<string, unknown>): P
     logger.error({ err: sanitized, evento_id: eventoId }, 'crm outbox: update falhou');
     throw new Error(`crm outbox update failed: ${sanitized}`);
   }
+}
+
+async function findPendingOutboxBySubject(subject: string): Promise<PendingOutboxRow | null> {
+  const { data, error } = await supabase
+    .from('crm_request_outbox')
+    .select('evento_id, assunto_chave, pending_action_id, payload')
+    .eq('assunto_chave', subject)
+    .eq('status', 'pendente')
+    .limit(1);
+
+  if (error) {
+    throw new Error(`crm outbox select failed: ${sanitizeError(error.message)}`);
+  }
+
+  return Array.isArray(data) && data.length > 0 ? data[0] as PendingOutboxRow : null;
+}
+
+async function updatePendingOutboxBySubject(
+  subject: string,
+  pendingActionId: string | null,
+  payload: Record<string, unknown>,
+): Promise<string | null> {
+  const existing = await findPendingOutboxBySubject(subject);
+  if (!existing) return null;
+
+  await updateOutbox(existing.evento_id, {
+    pending_action_id: pendingActionId,
+    payload: patchPayloadEventoId(payload, existing.evento_id),
+  });
+
+  return existing.evento_id;
 }
 
 async function markDelivered(row: CrmOutboxRow, response: Response): Promise<void> {
@@ -203,11 +248,19 @@ export async function enqueueCrmRequest(input: EnqueueCrmRequestInput): Promise<
       evento_id: input.eventoId,
       assunto_chave: input.assunto,
       pending_action_id: input.pendingActionId,
-      payload: input.payload,
+      payload: patchPayloadEventoId(input.payload, input.eventoId),
     });
 
   if (error && error.code !== '23505') {
     throw new Error(`crm outbox insert failed: ${error.message}`);
+  }
+
+  if (error?.code === '23505') {
+    await updatePendingOutboxBySubject(
+      input.assunto,
+      input.pendingActionId,
+      input.payload,
+    );
   }
 
   try {

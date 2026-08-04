@@ -27,6 +27,13 @@ const mockDb = vi.hoisted(() => {
   const rows: OutboxRow[] = [];
   let failUpdate = false;
   const insertMock = vi.fn(async (input: Partial<OutboxRow>) => {
+    if (rows.some((row) =>
+      row.assunto_chave === input.assunto_chave &&
+      row.status === 'pendente' &&
+      input.assunto_chave
+    )) {
+      return { data: null, error: { code: '23505', message: 'duplicate key value', constraint: 'crm_request_outbox_pending_subject_idx' } };
+    }
     if (rows.some((row) => row.evento_id === input.evento_id)) {
       return { data: null, error: { code: '23505', message: 'duplicate key value' } };
     }
@@ -70,14 +77,29 @@ const mockDb = vi.hoisted(() => {
       insert: (input: Partial<OutboxRow>) => insertMock(input),
       select: (_columns: string) => {
         let dueIso = new Date().toISOString();
+        let assuntoChave: string | null = null;
+        let statusValue: string | null = null;
         const builder = {
-          eq: (_field: string, _value: unknown) => builder,
+          eq: (field: string, value: unknown) => {
+            if (field === 'assunto_chave') assuntoChave = String(value);
+            if (field === 'status') statusValue = String(value);
+            return builder;
+          },
           lte: (_field: string, value: string) => {
             dueIso = value;
             return builder;
           },
           order: (_field: string, _options?: unknown) => builder,
-          limit: async (value: number) => ({ data: selectMock(dueIso, value), error: null }),
+          limit: async (value: number) => {
+            if (assuntoChave) {
+              const match = rows.find((row) =>
+                row.assunto_chave === assuntoChave &&
+                (statusValue ? row.status === statusValue : true)
+              );
+              return { data: match ? [{ ...match, payload: { ...match.payload } }] : [], error: null };
+            }
+            return { data: selectMock(dueIso, value), error: null };
+          },
         };
         return builder;
       },
@@ -222,6 +244,50 @@ describe('crm-requests outbox', () => {
     await enqueueCrmRequest(input);
 
     expect(mockDb.rows).toHaveLength(1);
+  });
+
+  it('reutiliza a linha pendente pelo mesmo assunto e atualiza o payload sem duplicar', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('seed')));
+
+    const { enqueueCrmRequest } = await import('../src/services/crm-requests.js');
+
+    await enqueueCrmRequest({
+      eventoId: 'escalacao-1',
+      assunto: '5511999999999@s.whatsapp.net:pagamento',
+      pendingActionId: null,
+      payload: {
+        acao_flora_id: 'escalacao-1',
+        sessao: '5511999999999@s.whatsapp.net',
+        tipo: 'pagamento',
+        prioridade: 'normal',
+        motivo: 'reembolso',
+      },
+    });
+
+    await enqueueCrmRequest({
+      eventoId: 'escalacao-2',
+      assunto: '5511999999999@s.whatsapp.net:pagamento',
+      pendingActionId: null,
+      payload: {
+        acao_flora_id: 'escalacao-2',
+        sessao: '5511999999999@s.whatsapp.net',
+        tipo: 'pagamento',
+        prioridade: 'normal',
+        motivo: 'pagamento',
+      },
+    });
+
+    expect(mockDb.rows).toHaveLength(1);
+    expect(mockDb.rows[0]?.evento_id).toBe('escalacao-1');
+    expect(mockDb.rows[0]?.assunto_chave).toBe('5511999999999@s.whatsapp.net:pagamento');
+    expect(mockDb.rows[0]?.pending_action_id).toBeNull();
+    expect(mockDb.rows[0]?.payload).toEqual({
+      acao_flora_id: 'escalacao-1',
+      sessao: '5511999999999@s.whatsapp.net',
+      tipo: 'pagamento',
+      prioridade: 'normal',
+      motivo: 'pagamento',
+    });
   });
 
   it('trata 201 como sucesso', async () => {

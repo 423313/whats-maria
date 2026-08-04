@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
-import { supabase } from '../lib/supabase.js';
 import { enqueueCrmRequest } from './crm-requests.js';
 
 export type EscalationType =
@@ -34,10 +33,6 @@ export interface HandleEscalationsInput {
 interface EscalationMapping {
   tipo: EscalationType;
   prioridade: EscalationPriority;
-}
-
-interface ActiveOutboxRow {
-  evento_id: string;
 }
 
 const ESCALATION_TOKEN_REGEX = /\[ESCALAR_MARIANA:([a-z_]+)\]/gi;
@@ -121,57 +116,6 @@ function buildEscalationPayload(
   return payload;
 }
 
-async function findActiveOutboxBySubject(subject: string): Promise<ActiveOutboxRow | null> {
-  const { data, error } = await supabase
-    .from('crm_request_outbox')
-    .select('evento_id')
-    .eq('assunto_chave', subject)
-    .eq('status', 'pendente')
-    .order('criada_em', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`crm outbox select failed: ${sanitizeError(error.message)}`);
-  }
-
-  return data as ActiveOutboxRow | null;
-}
-
-async function insertEscalationOutbox(
-  eventoId: string,
-  subject: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const { error } = await supabase
-    .from('crm_request_outbox')
-    .insert({
-      evento_id: eventoId,
-      assunto_chave: subject,
-      pending_action_id: null,
-      payload,
-    });
-
-  if (error) {
-    throw new Error(`crm outbox insert failed: ${sanitizeError(error.message)}`);
-  }
-}
-
-async function updateEscalationOutbox(
-  eventoId: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const { error } = await supabase
-    .from('crm_request_outbox')
-    .update({ payload })
-    .eq('evento_id', eventoId)
-    .eq('status', 'pendente');
-
-  if (error) {
-    throw new Error(`crm outbox update failed: ${sanitizeError(error.message)}`);
-  }
-}
-
 export async function handleEscalations(
   input: HandleEscalationsInput,
 ): Promise<void> {
@@ -192,8 +136,7 @@ export async function handleEscalations(
 
   for (const [subject, escalation] of uniqueBySubject.entries()) {
     try {
-      const existing = await findActiveOutboxBySubject(subject);
-      const eventoId = existing?.evento_id ?? randomUUID();
+      const eventoId = randomUUID();
       const payload = buildEscalationPayload(
         eventoId,
         input.sessionId,
@@ -202,16 +145,10 @@ export async function handleEscalations(
         escalation.mapping,
       );
 
-      if (existing) {
-        await updateEscalationOutbox(existing.evento_id, payload);
-        continue;
-      }
-
-      await insertEscalationOutbox(eventoId, subject, payload);
       await enqueueCrmRequest({
         eventoId,
         assunto: subject,
-        pendingActionId: eventoId,
+        pendingActionId: null,
         payload,
       });
     } catch (error) {

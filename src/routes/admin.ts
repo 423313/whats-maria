@@ -22,6 +22,11 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // filtro de disparo em massa). Não há dado estruturado de "promoção"; inferimos
 // pelo que a cliente escreveu.
 const PROMO_REGEX = /promo(?:ç|c)(?:ã|a)o|\bpromo\b|\bpromos\b|desconto|\boferta|cupom/i;
+const ESCALATION_MARKER_REGEX = /\[ESCALAR_MARIANA:[a-z_]+\]/i;
+
+export function containsEscalationMarker(text: string): boolean {
+  return ESCALATION_MARKER_REGEX.test(text);
+}
 
 /**
  * Envia uma mensagem manual (escrita pelo admin no painel) para uma cliente.
@@ -245,6 +250,9 @@ export async function adminRoutes(app: FastifyInstance) {
 
     const trimmed = text?.trim();
     if (!trimmed) return reply.status(400).send({ error: 'Mensagem vazia' });
+    if (containsEscalationMarker(trimmed)) {
+      return reply.status(400).send({ error: 'Comando interno não permitido nesta ação' });
+    }
 
     try {
       const messageId = await sendManualMessage(decoded, trimmed);
@@ -267,6 +275,9 @@ export async function adminRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Nenhuma cliente selecionada' });
     }
     if (!trimmed) return reply.status(400).send({ error: 'Mensagem vazia' });
+    if (containsEscalationMarker(trimmed)) {
+      return reply.status(400).send({ error: 'Comando interno não permitido nesta ação' });
+    }
 
     // Processa em background para não estourar o timeout do request com muitas clientes.
     // Pausa entre envios para não derrubar a instância do WhatsApp; uma falha não aborta as demais.

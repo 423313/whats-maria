@@ -15,6 +15,7 @@ import {
 import { resetFollowupState } from './followup.js';
 import { pendingBlockRemovalRegex } from '../lib/pending-block.js';
 import { STUDIO_LOCATION } from '../lib/studio-schedule.js';
+import { extractEscalations, handleEscalations } from './escalations.js';
 import { handlePendingActions } from './pending-actions.js';
 import { updateMarianaManualAt, isWithinMarianaManualWindow } from './human-takeover.js';
 import { routeMessage, extractText } from './message-routing.js';
@@ -563,6 +564,11 @@ async function resolveAgentType(sessionId: string): Promise<string> {
   return data?.agent_type ?? DEFAULT_AGENT_TYPE;
 }
 
+function sanitizeEscalationError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
 async function flushSession(sessionId: string): Promise<void> {
   const [paused, inMarianaWindow, rows, agentType] = await Promise.all([
     isAIPaused(sessionId),
@@ -678,6 +684,16 @@ async function flushSession(sessionId: string): Promise<void> {
       'handlePendingActions falhou',
     );
   });
+  handleEscalations({
+    sessionId,
+    userText: concatenated,
+    assistantMessages: mensagens,
+  }).catch((err) => {
+    logger.error(
+      { err: sanitizeEscalationError(err), session_id: sessionId },
+      'handleEscalations falhou',
+    );
+  });
 
   const TABELA_PRECOS_URL = 'https://jnfeerxcxxmgjutkfzig.supabase.co/storage/v1/object/public/imagens/precos.jpeg';
   const TABELA_TOKEN = '[TABELA_PRECOS]';
@@ -700,10 +716,9 @@ async function flushSession(sessionId: string): Promise<void> {
   // pra cliente. Mesmo padrão usado em handlePendingActions (lib/pending-block).
   const PENDING_BLOCK_REGEX = pendingBlockRemovalRegex();
 
-  // Token simples de escalação (ex: [ESCALAR_MARIANA:medico]).
-  const ESCALAR_TOKEN_REGEX = /\[ESCALAR_MARIANA:([a-z_]+)\]/gi;
+  const { sanitizedMessages } = extractEscalations(mensagens);
 
-  for (let i = 0; i < mensagens.length; i++) {
+  for (let i = 0; i < sanitizedMessages.length; i++) {
     // Verifica a janela antes de CADA mensagem — inclusive a primeira.
     // O runAgent pode levar 2-4s; Mariana pode enviar um áudio durante esse tempo.
     // Não usar "i > 0" aqui: a checagem inicial no topo do flushSession cobre o
@@ -716,21 +731,16 @@ async function flushSession(sessionId: string): Promise<void> {
       break;
     }
 
-    const rawText = mensagens[i]!;
+    const rawText = sanitizedMessages[i]!;
     const hasTabela = rawText.includes(TABELA_TOKEN);
     const hasCards = rawText.includes(CARDS_TOKEN);
     const hasLocalizacao = rawText.includes(LOCALIZACAO_TOKEN);
-
-    // Captura motivos de escalação ANTES de remover do texto.
-    const escalarMatches = [...rawText.matchAll(ESCALAR_TOKEN_REGEX)];
-    const escalarMotivos = escalarMatches.map((m) => m[1]!.toLowerCase());
 
     let text = rawText
       .replace(TABELA_TOKEN, '')
       .replace(CARDS_TOKEN, '')
       .replace(LOCALIZACAO_TOKEN, '')
       .replace(PENDING_BLOCK_REGEX, '')
-      .replace(ESCALAR_TOKEN_REGEX, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
@@ -815,11 +825,6 @@ async function flushSession(sessionId: string): Promise<void> {
       }
       if (i < mensagens.length - 1) await delay(interMsgMs);
 
-      // Escalação genérica: pra cada motivo capturado, notifica Mariana
-      // DESABILITADO: essas notificações estavam vazando para clientes
-      // for (const motivo of escalarMotivos) {
-      //   void notifyMarianaEscalation(sessionId, motivo, text);
-      // }
     } catch (err) {
       const errorDetails =
         err instanceof EvolutionError

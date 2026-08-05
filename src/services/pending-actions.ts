@@ -193,16 +193,24 @@ export async function handlePendingActions(
       const currentYear = resolveRequestedYear(dateMatch[1]);
       const minSlots = serviceToMinSlots(service);
       try {
-        const { valid, freeSlots } = await checkConsecutiveSlotsFree(
+        const slotCheck = await checkConsecutiveSlotsFree(
           dateMatch[1], timeMatch[1], minSlots, currentYear,
         );
-        if (!valid) {
+        if (slotCheck.status === 'insufficient') {
           slotWarning =
-            `⚠️ AVISO: slot ${timeMatch[1]} tem apenas ${freeSlots * 30} min livre` +
+            `⚠️ AVISO: slot ${timeMatch[1]} tem apenas ${slotCheck.freeSlots * 30} min livre` +
             ` (serviço precisa de ~${minSlots * 30} min). Confirme a agenda antes de responder à cliente.`;
           logger.warn(
-            { slot: timeMatch[1], freeSlots, minSlots, service },
+            { slot: timeMatch[1], freeSlots: slotCheck.freeSlots, minSlots, service },
             'slot validation: janela insuficiente detectada',
+          );
+        } else if (slotCheck.status === 'unverified') {
+          slotWarning =
+            `⚠️ AVISO: não consegui conferir a disponibilidade de ${timeMatch[1]} no CRM agora. ` +
+            'Confirme a agenda manualmente antes de responder à cliente.';
+          logger.warn(
+            { session_id: sessionId, slot: timeMatch[1], reason: slotCheck.reason, minSlots, service },
+            'slot validation: CRM não verificável',
           );
         }
       } catch (err) {

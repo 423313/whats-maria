@@ -57,13 +57,10 @@ const envSchema = z.object({
   // com 'union': qual das duas fontes é fail-closed (falha aborta) — a outra vira só
   // warn e segue. Default 'gcal'/'off': reproduz o comportamento atual exato até o
   // Pedro decidir trocar — rollback instantâneo, sem deploy, só trocando a variável.
+  // A Flora usa exclusivamente a agenda do CRM operacional.
   CRM_BASE_URL: z.string().url().optional(),
   CRM_API_SECRET: z.string().optional(),
-  AGENDA_SOURCE: z.enum(['gcal', 'union', 'crm']).default('gcal'),
-  AGENDA_UNION_REQUIRED: z.enum(['gcal', 'crm']).default('crm'),
-  // Liga a consulta em paralelo ao CRM só para log de divergência (nunca usada na
-  // resposta à cliente) — mede o CRM contra o Google antes de confiar nele de vez.
-  AGENDA_SHADOW: z.enum(['on', 'off']).default('off'),
+  AGENDA_SOURCE: z.literal('crm').default('crm'),
 });
 
 export type Env = z.infer<typeof envSchema>;

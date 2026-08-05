@@ -180,47 +180,12 @@ export async function fetchBusyFromGcal(deMs: number, ateMs: number): Promise<Bu
 }
 
 /**
- * Escolhe a fonte de ocupação conforme AGENDA_SOURCE. Em 'union', a fonte
- * marcada em AGENDA_UNION_REQUIRED é fail-closed (falha propaga e vira
- * FAILURE_FALLBACK pra quem chama); a outra fonte, se falhar, só gera warn e
- * o resultado segue só com o que deu certo.
+ * A Flora usa exclusivamente o CRM como fonte de ocupação.
  */
 async function fetchBusyForSource(startSp: Date, endSp: Date): Promise<BusyInterval[]> {
-  const deMs = startSp.getTime();
-  const ateMs = endSp.getTime();
-
-  if (env.AGENDA_SOURCE === 'crm') {
-    return fetchBusyFromCrm(deMs, ateMs);
-  }
-
-  if (env.AGENDA_SOURCE === 'union') {
-    const [gcalResult, crmResult] = await Promise.allSettled([
-      fetchBusyFromGcal(deMs, ateMs),
-      fetchBusyFromCrm(deMs, ateMs),
-    ]);
-
-    if (env.AGENDA_UNION_REQUIRED === 'crm' && crmResult.status === 'rejected') {
-      throw crmResult.reason;
-    }
-    if (env.AGENDA_UNION_REQUIRED === 'gcal' && gcalResult.status === 'rejected') {
-      throw gcalResult.reason;
-    }
-
-    const combined: BusyInterval[] = [];
-    if (gcalResult.status === 'fulfilled') {
-      combined.push(...gcalResult.value);
-    } else {
-      logger.warn({ err: gcalResult.reason }, 'calendar-availability: fonte gcal falhou em modo union, seguindo so com crm');
-    }
-    if (crmResult.status === 'fulfilled') {
-      combined.push(...crmResult.value);
-    } else {
-      logger.warn({ err: crmResult.reason }, 'calendar-availability: fonte crm falhou em modo union, seguindo so com gcal');
-    }
-    return combined;
-  }
-
-  return fetchBusyFromGcal(deMs, ateMs);
+  // A Flora usa exclusivamente o CRM. O caminho do Google fica apenas
+  // exportado para o script historico de comparacao e nunca e chamado aqui.
+  return fetchBusyFromCrm(startSp.getTime(), endSp.getTime());
 }
 
 // ───── geração de slots livres ─────
@@ -568,46 +533,12 @@ export async function buildAvailabilityContext(): Promise<string> {
     return cachedContext.text;
   }
 
-  // Só no caminho 'gcal' (o padrão hoje) preservamos o log/fallback ANTES de
-  // entrar no try — bit-a-bit igual ao comportamento anterior a esta mudança.
-  // 'union'/'crm' têm sua própria checagem de configuração dentro de
-  // fetchBusyForSource, cujo erro é pego pelo catch abaixo.
-  if (env.AGENDA_SOURCE === 'gcal' && !getCalendarClient()) {
-    logger.warn('calendar-availability: GOOGLE_SERVICE_ACCOUNT_KEY/GOOGLE_CALENDAR_ID ausentes');
-    return FAILURE_FALLBACK;
-  }
-
   try {
     const today = spParts(new Date(now));
     const startSp = spDate(today.year, today.month1, today.day, 0);
     const endSp = new Date(startSp.getTime() + DAYS_AHEAD * 24 * 60 * 60 * 1000);
 
     const busy = await fetchBusyForSource(startSp, endSp);
-
-    // Sombra: só quando a fonte real ainda é 'gcal' (zero risco — nunca troca
-    // o que a Flora oferece). Fire-and-forget, qualquer falha só vira log.
-    if (env.AGENDA_SOURCE === 'gcal' && env.AGENDA_SHADOW === 'on') {
-      void fetchBusyFromCrm(startSp.getTime(), endSp.getTime())
-        .then((crmBusy) => {
-          const diff = diffBusySources(startSp, busy, crmBusy);
-          if (diff.onlyGcal.length === 0 && diff.onlyCrm.length === 0) {
-            logger.info('calendar-availability: sombra CRM sem divergencia');
-            return;
-          }
-          logger.warn(
-            {
-              onlyGcalCount: diff.onlyGcal.length,
-              onlyCrmCount: diff.onlyCrm.length,
-              onlyGcalAmostra: diff.onlyGcal.slice(0, 5),
-              onlyCrmAmostra: diff.onlyCrm.slice(0, 5),
-            },
-            'calendar-availability: sombra CRM com divergencia',
-          );
-        })
-        .catch((err) => {
-          logger.warn({ err }, 'calendar-availability: sombra CRM falhou (nao afeta resposta)');
-        });
-    }
 
     const days: DaySlots[] = [];
     for (let i = 0; i < DAYS_AHEAD; i++) {
@@ -637,36 +568,40 @@ export function invalidateAvailabilityCache(): void {
  * Usado por handlePendingActions para alertar a Mariana quando o horário
  * solicitado não comporta a duração do serviço.
  *
- * Retorna { valid: true } quando o calendário não está configurado ou
- * quando ocorre falha na consulta — nesse caso assume-se que está ok e
- * não gera aviso falso positivo.
+ * Consulta exclusivamente o CRM. Em caso de falha, retorna `unverified` para
+ * que a notificação à Mariana peça conferência manual.
  */
+export type SlotCheck =
+  | { status: 'ok'; freeSlots: number }
+  | { status: 'insufficient'; freeSlots: number }
+  | { status: 'unverified'; reason: string };
+
 export async function checkConsecutiveSlotsFree(
   dateDDMM: string,
   timeHHMM: string,
   minSlotsNeeded: number,
   year: number,
-): Promise<{ valid: boolean; freeSlots: number }> {
+): Promise<SlotCheck> {
   const [dayStr, monthStr] = dateDDMM.split('/');
   const day = parseInt(dayStr ?? '0', 10);
   const month1 = parseInt(monthStr ?? '0', 10);
-  if (!day || !month1) return { valid: false, freeSlots: 0 };
+  if (!day || !month1) return { status: 'unverified', reason: 'data invalida' };
 
   const [hStr, mStr] = timeHHMM.split(':');
   const startH = parseInt(hStr ?? '0', 10);
   const startM = parseInt(mStr ?? '0', 10);
-
-  const client = getCalendarClient();
-  if (!client) return { valid: true, freeSlots: minSlotsNeeded };
 
   const dayStart = spDate(year, month1, day, 0);
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
   let busy: BusyInterval[];
   try {
-    busy = await fetchBusyIntervals(client.calendar, client.calendarId, dayStart, dayEnd);
-  } catch {
-    return { valid: true, freeSlots: minSlotsNeeded };
+    busy = await fetchBusyFromCrm(dayStart.getTime(), dayEnd.getTime());
+  } catch (err) {
+    return {
+      status: 'unverified',
+      reason: err instanceof Error ? err.message : 'falha ao consultar o CRM',
+    };
   }
 
   const parts = spParts(dayStart);
@@ -683,5 +618,7 @@ export async function checkConsecutiveSlotsFree(
     count++;
   }
 
-  return { valid: count >= minSlotsNeeded, freeSlots: count };
+  return count >= minSlotsNeeded
+    ? { status: 'ok', freeSlots: count }
+    : { status: 'insufficient', freeSlots: count };
 }

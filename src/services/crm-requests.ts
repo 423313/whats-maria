@@ -78,7 +78,9 @@ function buildRequestBody(row: CrmOutboxRow): Record<string, unknown> {
     sessao_id: sessao,
     cliente_nome: nome || 'Cliente WhatsApp',
     cliente_telefone: telefone || sessao.replace(/@s\.whatsapp\.net$/, ''),
-    ...(servico !== undefined ? { servico_informado: servico } : {}),
+    ...(typeof servico === 'string' && servico.trim()
+      ? { servico_informado: servico.trim() }
+      : {}),
     prioridade: row.payload.prioridade ?? 'normal',
     status: row.payload.status ?? 'aguardando_analise',
   };

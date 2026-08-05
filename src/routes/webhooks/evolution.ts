@@ -19,7 +19,7 @@ import { handleEvolutionWebhook } from '../../services/chatbot.js';
  * a URL do webhook na Evolution for atualizada para incluir `?token=...`.
  */
 export function origemAutorizada(req: { query: unknown }): boolean {
-  if (!env.EVOLUTION_WEBHOOK_TOKEN) return true;
+  if (!env.EVOLUTION_WEBHOOK_TOKEN) return env.NODE_ENV !== 'production';
   const query = req.query as Record<string, string | undefined> | undefined;
   const token = query?.token;
   if (!token) return false;

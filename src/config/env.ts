@@ -68,8 +68,18 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+const ambienteValidado = envSchema.superRefine((valor, contexto) => {
+  if (valor.NODE_ENV === 'production' && !valor.EVOLUTION_WEBHOOK_TOKEN) {
+    contexto.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['EVOLUTION_WEBHOOK_TOKEN'],
+      message: 'obrigatorio em producao',
+    });
+  }
+});
+
 function loadEnv(): Env {
-  const parsed = envSchema.safeParse(process.env);
+  const parsed = ambienteValidado.safeParse(process.env);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)

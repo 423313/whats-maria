@@ -246,6 +246,31 @@ describe('crm-requests outbox', () => {
     expect(mockDb.rows).toHaveLength(1);
   });
 
+  it('reconstrÃ³i uma solicitaÃ§Ã£o para pending_action sem outbox', async () => {
+    const { buildPendingActionRecoveryRequest } = await import('../src/services/crm-requests.js');
+
+    expect(buildPendingActionRecoveryRequest({
+      id: 'pending-orphan',
+      session_id: '5511999999999@s.whatsapp.net',
+      client_name: 'Pedro',
+      client_phone: '5511999999999',
+      fields: {
+        procedimento: 'ManutenÃ§Ã£o com esmaltaÃ§Ã£o em gel',
+        data_e_horario_solicitados: '11:00 (11/08)',
+      },
+    })).toEqual({
+      eventoId: 'pending-orphan',
+      assunto: '5511999999999@s.whatsapp.net:agendamento:11:00 (11/08)',
+      pendingActionId: 'pending-orphan',
+      payload: expect.objectContaining({
+        acao_flora_id: 'pending-orphan',
+        tipo: 'agendamento',
+        servico: 'ManutenÃ§Ã£o com esmaltaÃ§Ã£o em gel',
+        inicio_solicitado: null,
+      }),
+    });
+  });
+
   it('não refaz POST quando a mesma solicitação explícita já foi entregue antes do reinício', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

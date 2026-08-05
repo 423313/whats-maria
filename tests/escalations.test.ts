@@ -161,6 +161,23 @@ describe('extractEscalations', () => {
 });
 
 describe('handleEscalations', () => {
+  it('reconhece "vou chamar a Mariana" como encaminhamento de cancelamento', async () => {
+    await handleEscalations({
+      sessionId: '5511999999999@s.whatsapp.net',
+      userText: 'Quero cancelar um horÃ¡rio que jÃ¡ estÃ¡ agendado.',
+      assistantMessages: ['Vou chamar a Mariana pra te ajudar com isso, sÃ³ um instante.'],
+    });
+
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      assunto: expect.stringMatching(/^5511999999999@s\.whatsapp\.net:cancelamento:/),
+      payload: expect.objectContaining({
+        tipo: 'cancelamento',
+        prioridade: 'normal',
+      }),
+    }));
+  });
+
   it('usa fallback determinístico no caso do Pedro quando a Flora promete repassar para a Mariana', async () => {
     await handleEscalations({
       sessionId: '5511999999999@s.whatsapp.net',

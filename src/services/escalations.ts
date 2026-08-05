@@ -61,6 +61,7 @@ const SERVICE_REGEX =
   /\b(blindagem|alongamento|manuten[cç][aã]o|esmalta[cç][aã]o em gel|spa dos p[eé]s|banho de gel|encapsulada|fibra|sobrancelha|cilios|cílios|curso)\b/i;
 const EXPLICIT_HANDOFF_PATTERNS = [
   /\b(vou|vai)\s+(te\s+)?(repassar|passar|encaminhar)\b.*\bmariana\b/i,
+  /\b(vou|vai)\s+(te\s+)?chamar\s+(a|pra|para)\s+mariana\b/i,
   /\b(vou|vai)\s+pedir\b.*\bmariana\b.*\b(responder|confirmar|te chamar|te atender)\b/i,
   /\bmariana\b.*\b(vai|vai te)\b.*\b(confirmar|responder|te chamar|te atender)\b/i,
   /\bela\b.*\b(vai|vai te)\b.*\b(confirmar|responder|te chamar|te atender)\b/i,

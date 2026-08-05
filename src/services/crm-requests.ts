@@ -28,6 +28,14 @@ interface PendingOutboxRow {
   status?: 'pendente' | 'entregue' | 'erro_permanente';
 }
 
+interface PendingActionRecoveryRow {
+  id: string;
+  session_id: string;
+  client_name: string | null;
+  client_phone: string | null;
+  fields: Record<string, unknown> | null;
+}
+
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 1_800_000] as const;
 const MAX_BATCH_SIZE = 25;
 
@@ -105,6 +113,72 @@ async function findPendingOutboxBySubject(subject: string): Promise<PendingOutbo
   }
 
   return Array.isArray(data) && data.length > 0 ? data[0] as PendingOutboxRow : null;
+}
+
+function recoveryField(fields: Record<string, unknown> | null, key: string): string {
+  const normalizeKey = (input: string) => input
+    .normalize('NFD')
+    .replace(/\p{Diacritic}+/gu, '')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_|_$/g, '')
+    .toLowerCase();
+  const wanted = normalizeKey(key);
+  const actualKey = Object.keys(fields ?? {}).find((candidate) => normalizeKey(candidate) === wanted);
+  const value = actualKey ? fields?.[actualKey] : undefined;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function buildPendingActionRecoveryRequest(row: PendingActionRecoveryRow): EnqueueCrmRequestInput {
+  const dataHorario = recoveryField(row.fields, 'data_e_horário_solicitados');
+  const procedimento = recoveryField(row.fields, 'procedimento');
+  const eventoId = row.id;
+
+  return {
+    eventoId,
+    assunto: `${row.session_id}:agendamento:${dataHorario}`,
+    pendingActionId: eventoId,
+    payload: {
+      acao_flora_id: eventoId,
+      sessao: row.session_id,
+      tipo: 'agendamento',
+      motivo: 'agendamento',
+      nome: row.client_name ?? '',
+      telefone: row.client_phone ?? '',
+      servico: procedimento,
+      inicio_solicitado: null,
+    },
+  };
+}
+
+export async function reconcilePendingActionsToOutbox(limit = 25): Promise<number> {
+  if (!crmCentralEnabled()) return 0;
+
+  const { data, error } = await supabase
+    .from('pending_actions')
+    .select('id, session_id, client_name, client_phone, fields')
+    .eq('type', 'agendamento')
+    .eq('status', 'pendente')
+    .order('created_at', { ascending: true })
+    .limit(Math.min(Math.max(limit, 1), MAX_BATCH_SIZE));
+
+  if (error) throw new Error(`pending actions recovery select failed: ${sanitizeError(error.message)}`);
+
+  let recovered = 0;
+  for (const row of (data ?? []) as PendingActionRecoveryRow[]) {
+    const { data: existing, error: existingError } = await supabase
+      .from('crm_request_outbox')
+      .select('evento_id')
+      .eq('pending_action_id', row.id)
+      .limit(1);
+
+    if (existingError) throw new Error(`pending actions recovery outbox lookup failed: ${sanitizeError(existingError.message)}`);
+    if (Array.isArray(existing) && existing.length > 0) continue;
+
+    await enqueueCrmRequest(buildPendingActionRecoveryRequest(row));
+    recovered++;
+  }
+
+  return recovered;
 }
 
 async function findOutboxBySubject(subject: string): Promise<PendingOutboxRow | null> {
@@ -319,6 +393,14 @@ export async function enqueueCrmRequest(input: EnqueueCrmRequestInput): Promise<
 
 export function startCrmOutboxSweeper(): void {
   if (!crmCentralEnabled() || sweeperHandle) return;
+
+  void reconcilePendingActionsToOutbox()
+    .then((recovered) => {
+      if (recovered > 0) logger.info({ recovered }, 'crm outbox: pendências órfãs recuperadas');
+    })
+    .catch((error) => {
+      logger.error({ err: sanitizeError(error) }, 'crm outbox: recuperação inicial falhou');
+    });
 
   sweeperHandle = setInterval(() => {
     if (sweepInFlight) return;

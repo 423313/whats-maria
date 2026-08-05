@@ -21,6 +21,8 @@ vi.mock('../src/lib/logger.js', () => ({
 }));
 
 import {
+  buildDaySlots,
+  buildOfficialGridSlots,
   checkConsecutiveSlotsFree,
   diffBusySources,
   fetchBusyFromCrm,
@@ -153,5 +155,22 @@ describe('checkConsecutiveSlotsFree', () => {
       status: 'unverified',
       reason: 'CRM indisponivel',
     });
+  });
+});
+
+describe('reprodução do caso de 08/08/2026', () => {
+  it('não oferece nenhum horário quando o CRM bloqueia sábado das 08h às 15h', () => {
+    const busy: BusyInterval[] = [{
+      startMs: Date.parse('2026-08-08T08:00:00-03:00'),
+      endMs: Date.parse('2026-08-08T15:00:00-03:00'),
+    }];
+    const day = buildDaySlots(
+      { year: 2026, month1: 8, day: 8, weekdayIdx: 6 },
+      busy,
+      Date.parse('2020-01-01T00:00:00Z'),
+    );
+
+    expect(day.slots).toEqual([]);
+    expect(buildOfficialGridSlots(day)).toEqual([]);
   });
 });

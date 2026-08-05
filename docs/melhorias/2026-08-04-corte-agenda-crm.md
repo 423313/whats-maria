@@ -30,3 +30,13 @@ A camada de disponibilidade da Flora ainda permitia usar o Google Calendar, e `A
 - 13 arquivos de teste, 179 testes aprovados.
 - Typecheck e build aprovados.
 - CRM confirmou que 05/08 às 11:00 está dentro de um intervalo ocupado.
+
+## Revisão do caso Lucieli, 08/08/2026
+
+O print mostrou a Flora oferecendo 08:00, 09:00, 10:30 e 11:00 para sábado 08/08/2026. A consulta ao CRM confirmou um bloqueio contínuo das 08:00 às 15:00, portanto nenhum desses horários é válido.
+
+O cálculo local da Flora, usando esse intervalo, retorna zero horários brutos e zero horários da grade oficial. O diagnóstico HTTP da Flora em produção foi então consultado e revelou o problema operacional: o processo ativo não tinha `CRM_BASE_URL` nem `CRM_API_SECRET`, apesar de as variáveis estarem salvas como alterações pendentes na Railway. O processo caía no bloco de indisponibilidade, sem poder consultar o CRM.
+
+As variáveis foram aplicadas com redeploy explícito. Após o restart, o diagnóstico de produção passou a retornar `sáb 08/08: sem horários da grade livres`, e o CRM continuou confirmando o intervalo ocupado.
+
+Foi adicionado teste de regressão específico para o bloqueio de 08:00 às 15:00. A Flora ficou com 180 testes aprovados; o CRM ficou com 221 testes, lint e build aprovados.

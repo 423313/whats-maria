@@ -38,3 +38,7 @@ alter table public.crm_request_outbox
   add column if not exists claim_until timestamptz;
 create index if not exists crm_request_outbox_claim_idx
   on public.crm_request_outbox (claim_until) where status = 'pendente';
+
+alter table public.crm_request_outbox enable row level security;
+revoke all on public.crm_request_outbox from anon, authenticated;
+grant select, insert, update on public.crm_request_outbox to service_role;

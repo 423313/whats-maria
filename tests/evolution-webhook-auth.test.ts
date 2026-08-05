@@ -14,7 +14,7 @@ const estado = vi.hoisted(() => ({ webhookToken: undefined as string | undefined
 
 vi.mock('../src/config/env.js', () => ({
   get env() {
-    return { EVOLUTION_WEBHOOK_TOKEN: estado.webhookToken };
+    return { NODE_ENV: 'production', EVOLUTION_WEBHOOK_TOKEN: estado.webhookToken };
   },
 }));
 vi.mock('../src/lib/logger.js', () => ({

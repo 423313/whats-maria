@@ -18,8 +18,16 @@ import { handleEvolutionWebhook } from '../../services/chatbot.js';
  * deste código. Só passa a exigir o token depois que a env var for definida E
  * a URL do webhook na Evolution for atualizada para incluir `?token=...`.
  */
+let webhookTokenWarningLogged = false;
+
 export function origemAutorizada(req: { query: unknown }): boolean {
-  if (!env.EVOLUTION_WEBHOOK_TOKEN) return env.NODE_ENV !== 'production';
+  if (!env.EVOLUTION_WEBHOOK_TOKEN) {
+    if (!webhookTokenWarningLogged) {
+      logger.warn('webhook evolution: EVOLUTION_WEBHOOK_TOKEN ausente, mantendo compatibilidade até configurar o token na Evolution');
+      webhookTokenWarningLogged = true;
+    }
+    return true;
+  }
   const query = req.query as Record<string, string | undefined> | undefined;
   const token = query?.token;
   if (!token) return false;

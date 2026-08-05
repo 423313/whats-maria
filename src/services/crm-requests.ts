@@ -2,6 +2,7 @@ import { env } from '../config/env.js';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../lib/logger.js';
 import { supabase } from '../lib/supabase.js';
+import { saoPauloParts } from '../lib/time.js';
 
 export interface EnqueueCrmRequestInput {
   eventoId: string;
@@ -128,6 +129,17 @@ function recoveryField(fields: Record<string, unknown> | null, key: string): str
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function recoveryRequestedStartIso(dataHorario: string): string | null {
+  const timeMatch = dataHorario.match(/(\d{2}):(\d{2})/);
+  const dateMatch = dataHorario.match(/\((\d{2})\/(\d{2})\)/);
+  if (!timeMatch || !dateMatch) return null;
+
+  const hoje = saoPauloParts();
+  const month = Number(dateMatch[2]);
+  const year = month < hoje.month ? hoje.year + 1 : hoje.year;
+  return `${year}-${dateMatch[2]}-${dateMatch[1]}T${timeMatch[1]}:${timeMatch[2]}:00-03:00`;
+}
+
 export function buildPendingActionRecoveryRequest(row: PendingActionRecoveryRow): EnqueueCrmRequestInput {
   const dataHorario = recoveryField(row.fields, 'data_e_horário_solicitados');
   const procedimento = recoveryField(row.fields, 'procedimento');
@@ -145,7 +157,7 @@ export function buildPendingActionRecoveryRequest(row: PendingActionRecoveryRow)
       nome: row.client_name ?? '',
       telefone: row.client_phone ?? '',
       servico: procedimento,
-      inicio_solicitado: null,
+      inicio_solicitado: recoveryRequestedStartIso(dataHorario),
     },
   };
 }

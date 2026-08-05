@@ -266,7 +266,7 @@ describe('crm-requests outbox', () => {
         acao_flora_id: 'pending-orphan',
         tipo: 'agendamento',
         servico: 'ManutenÃ§Ã£o com esmaltaÃ§Ã£o em gel',
-        inicio_solicitado: null,
+        inicio_solicitado: '2026-08-11T11:00:00-03:00',
       }),
     });
   });

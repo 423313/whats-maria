@@ -39,6 +39,7 @@ interface PendingActionRecoveryRow {
 
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 1_800_000] as const;
 const MAX_BATCH_SIZE = 25;
+const MAX_RECOVERY_BATCH_SIZE = 100;
 
 let sweeperHandle: NodeJS.Timeout | null = null;
 let sweepInFlight = false;
@@ -192,7 +193,7 @@ export async function reconcilePendingActionsToOutbox(limit = 25): Promise<numbe
     .eq('type', 'agendamento')
     .eq('status', 'pendente')
     .order('created_at', { ascending: true })
-    .limit(Math.min(Math.max(limit, 1), MAX_BATCH_SIZE));
+    .limit(Math.min(Math.max(limit, 1), MAX_RECOVERY_BATCH_SIZE));
 
   if (error) throw new Error(`pending actions recovery select failed: ${sanitizeError(error.message)}`);
 
@@ -427,7 +428,7 @@ export async function enqueueCrmRequest(input: EnqueueCrmRequestInput): Promise<
 export function startCrmOutboxSweeper(): void {
   if (!crmCentralEnabled() || sweeperHandle) return;
 
-  void reconcilePendingActionsToOutbox()
+  void reconcilePendingActionsToOutbox(MAX_RECOVERY_BATCH_SIZE)
     .then((recovered) => {
       if (recovered > 0) logger.info({ recovered }, 'crm outbox: pendências órfãs recuperadas');
     })

@@ -64,6 +64,7 @@ const mockPendingDb = vi.hoisted(() => {
 
 const mockCheckConsecutiveSlotsFree = vi.hoisted(() => vi.fn(async () => ({ valid: true, freeSlots: 2 })));
 const mockSaveClientName = vi.hoisted(() => vi.fn());
+const mockGetClientName = vi.hoisted(() => vi.fn(async () => null as string | null));
 const mockEnqueueCrmRequest = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('../src/config/env.js', () => ({ env: mockEnv }));
@@ -81,6 +82,7 @@ vi.mock('../src/services/calendar-availability.js', () => ({
 }));
 vi.mock('../src/services/chat-repository.js', () => ({
   saveClientName: mockSaveClientName,
+  getClientName: mockGetClientName,
 }));
 vi.mock('../src/services/crm-requests.js', () => ({
   enqueueCrmRequest: mockEnqueueCrmRequest,
@@ -104,6 +106,8 @@ beforeEach(() => {
   mockPendingDb.reset();
   mockCheckConsecutiveSlotsFree.mockClear();
   mockSaveClientName.mockClear();
+  mockGetClientName.mockReset();
+  mockGetClientName.mockResolvedValue(null);
   mockEnqueueCrmRequest.mockClear();
   mockLogger.error.mockClear();
 });
@@ -209,6 +213,41 @@ describe('handlePendingActions', () => {
     expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
       eventoId: 'pending-existing-id',
       pendingActionId: 'pending-existing-id',
+    }));
+  });
+
+  it('usa o nome salvo da sessão no payload do CRM quando o bloco não informa nome', async () => {
+    const sessionId = '5511777777777@s.whatsapp.net';
+    mockGetClientName.mockResolvedValueOnce('Carolina');
+
+    await handlePendingActions(sessionId, [
+      [
+        '--- SOLICITAÇÃO DE AGENDAMENTO ---',
+        'Procedimento: Blindagem',
+        'Data e horário solicitados: 14:00 (05/08)',
+      ].join('\n'),
+    ]);
+
+    expect(mockGetClientName).toHaveBeenCalledWith(sessionId);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ nome: 'Carolina' }),
+    }));
+  });
+
+  it('mantém nome vazio no payload do CRM quando não há nome salvo', async () => {
+    const sessionId = '5511666666666@s.whatsapp.net';
+
+    await handlePendingActions(sessionId, [
+      [
+        '--- SOLICITAÇÃO DE AGENDAMENTO ---',
+        'Procedimento: Blindagem',
+        'Data e horário solicitados: 14:00 (05/08)',
+      ].join('\n'),
+    ]);
+
+    expect(mockGetClientName).toHaveBeenCalledWith(sessionId);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ nome: '' }),
     }));
   });
 

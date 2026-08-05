@@ -10,7 +10,7 @@ import { env } from '../config/env.js';
 import { getEvolutionClient } from '../lib/evolution.js';
 import { buildPendingBlockRegex } from '../lib/pending-block.js';
 import { checkConsecutiveSlotsFree } from './calendar-availability.js';
-import { saveClientName } from './chat-repository.js';
+import { getClientName, saveClientName } from './chat-repository.js';
 import { saoPauloParts, saoPauloDateStartToUtcIso } from '../lib/time.js';
 import { enqueueCrmRequest } from './crm-requests.js';
 import { decidirCanais } from './escalations.js';
@@ -101,11 +101,12 @@ export async function handlePendingActions(
   const type: 'agendamento' | 'curso' = agendamentoMatch ? 'agendamento' : 'curso';
   const rawBlock = match[0]!;
   const fields = parseFields(match[1]!);
-  const clientName = extractClientName(fields);
+  const explicitClientName = extractClientName(fields);
+  const clientName = explicitClientName || await getClientName(sessionId) || '';
 
   // Persiste o nome explícito (prioridade máxima — sobrescreve pushName)
-  if (clientName) {
-    void saveClientName(sessionId, clientName);
+  if (explicitClientName) {
+    void saveClientName(sessionId, explicitClientName);
   }
 
   // Salva no banco (ignora duplicata para a mesma sessão+tipo no mesmo dia).

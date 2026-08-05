@@ -243,6 +243,25 @@ export async function saveClientNameIfMissing(sessionId: string, name: string): 
 }
 
 /**
+ * Recupera o nome salvo para a sessão, seja ele informado pela cliente ou
+ * capturado do pushName do WhatsApp.
+ */
+export async function getClientName(sessionId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('chat_control')
+    .select('client_name')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  if (error) {
+    logger.debug({ err: error.message, session_id: sessionId }, 'getClientName query failed');
+    return null;
+  }
+
+  const name = typeof data?.client_name === 'string' ? data.client_name.trim() : '';
+  return name || null;
+}
+
+/**
  * Salva (ou atualiza) o nome explícito informado pela cliente — tem prioridade sobre pushName.
  */
 export async function saveClientName(sessionId: string, name: string): Promise<void> {

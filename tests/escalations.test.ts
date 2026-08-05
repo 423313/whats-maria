@@ -85,9 +85,24 @@ vi.mock('../src/lib/supabase.js', () => ({
 vi.mock('../src/services/crm-requests.js', () => ({
   enqueueCrmRequest: mockEnqueueCrmRequest,
 }));
-vi.mock('node:crypto', () => ({
-  randomUUID: mockRandomUuid,
+vi.mock('../src/lib/time.js', () => ({
+  saoPauloParts: vi.fn(() => ({
+    year: 2026,
+    month: 8,
+    day: 5,
+    hour: 10,
+    minute: 0,
+    weekday: 3,
+    dateStr: '2026-08-05',
+  })),
 }));
+vi.mock('node:crypto', async () => {
+  const actual = await vi.importActual<typeof import('node:crypto')>('node:crypto');
+  return {
+    ...actual,
+    randomUUID: mockRandomUuid,
+  };
+});
 
 import {
   extractEscalations,
@@ -99,7 +114,7 @@ beforeEach(() => {
   mockOutboxDb.reset();
   mockEnqueueCrmRequest.mockClear();
   mockLogger.error.mockClear();
-  mockRandomUuid.mockClear();
+  mockRandomUuid.mockReset();
   mockRandomUuid
     .mockReturnValueOnce('uuid-duvida')
     .mockReturnValueOnce('uuid-pagamento')
@@ -109,6 +124,7 @@ beforeEach(() => {
 
 describe('mapEscalationType', () => {
   it.each([
+    ['agendamento', { tipo: 'agendamento', prioridade: 'normal' }],
     ['cancelar', { tipo: 'cancelamento', prioridade: 'normal' }],
     ['remarcar', { tipo: 'remarcacao', prioridade: 'normal' }],
     ['reembolso', { tipo: 'pagamento', prioridade: 'normal' }],
@@ -133,8 +149,8 @@ describe('extractEscalations', () => {
     ]);
 
     expect(resultado.escalations).toEqual([
-      { motivo: 'duvida', messageIndex: 0 },
-      { motivo: 'pagamento', messageIndex: 1 },
+      { motivo: 'duvida', messageIndex: 0, source: 'marker' },
+      { motivo: 'pagamento', messageIndex: 1, source: 'marker' },
     ]);
     expect(resultado.sanitizedMessages).toEqual([
       'Vou pedir pra Mariana te responder isso direitinho.',
@@ -145,6 +161,108 @@ describe('extractEscalations', () => {
 });
 
 describe('handleEscalations', () => {
+  it('usa fallback determinístico no caso do Pedro quando a Flora promete repassar para a Mariana', async () => {
+    await handleEscalations({
+      sessionId: '5511999999999@s.whatsapp.net',
+      userText: 'Quero fazer blindagem no dia 06/08 às 14:00.',
+      assistantMessages: [
+        'Ainda não está agendado oficialmente, tá? Vou repassar pra Mariana e ela vai confirmar com você.',
+      ],
+    });
+
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      assunto: expect.stringMatching(/^5511999999999@s\.whatsapp\.net:agendamento:/),
+      pendingActionId: null,
+      payload: expect.objectContaining({
+        sessao: '5511999999999@s.whatsapp.net',
+        tipo: 'agendamento',
+        prioridade: 'normal',
+        motivo: 'agendamento',
+        servico: 'blindagem',
+        inicio_solicitado: '2026-08-06T14:00:00-03:00',
+      }),
+    }));
+  });
+
+  it.each([
+    ['Quero remarcar minha blindagem de 07/08 às 15:00.', 'remarcacao'],
+    ['Preciso cancelar meu horário de 07/08 às 15:00.', 'cancelamento'],
+    ['Queria saber se vocês fazem esmaltação em gel?', 'duvida'],
+    ['Fiquei chateada com o atraso no meu atendimento.', 'reclamacao'],
+    ['Enviei o pix e queria confirmar o pagamento.', 'pagamento'],
+    ['Quero falar direto com a Mariana, por favor.', 'atendimento_humano'],
+  ])('classifica %s via fallback explícito como %s', async (userText, tipoEsperado) => {
+    await handleEscalations({
+      sessionId: '5511666666666@s.whatsapp.net',
+      userText: String(userText),
+      assistantMessages: ['Vou repassar pra Mariana e ela vai confirmar com você.'],
+    });
+
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      assunto: expect.stringMatching(new RegExp(`^5511666666666@s\\.whatsapp\\.net:${tipoEsperado}:`)),
+      payload: expect.objectContaining({
+        tipo: tipoEsperado,
+      }),
+    }));
+  });
+
+  it('ignora frase genérica sem promessa de encaminhamento', async () => {
+    await handleEscalations({
+      sessionId: '5511222222222@s.whatsapp.net',
+      userText: 'Obrigada!',
+      assistantMessages: ['Estou à disposição se precisar de mais alguma coisa.'],
+    });
+
+    expect(mockEnqueueCrmRequest).not.toHaveBeenCalled();
+  });
+
+  it('mantém o marcador como caminho principal mesmo quando existe frase de encaminhamento explícita', async () => {
+    await handleEscalations({
+      sessionId: '5511333333333@s.whatsapp.net',
+      userText: 'Quero blindagem no dia 06/08 às 14:00.',
+      assistantMessages: [
+        'Vou repassar pra Mariana e ela vai confirmar com você.\n[ESCALAR_MARIANA:pagamento]',
+      ],
+    });
+
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        tipo: 'pagamento',
+        motivo: 'pagamento',
+      }),
+    }));
+  });
+
+  it('deduplica marcador duplicado no mesmo lote', async () => {
+    await handleEscalations({
+      sessionId: '5511444444444@s.whatsapp.net',
+      userText: 'Tem estacionamento?',
+      assistantMessages: ['Vou pedir pra Mariana ver isso.\n[ESCALAR_MARIANA:duvida]\n[ESCALAR_MARIANA:duvida]'],
+    });
+
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('cai para atendimento humano urgente quando a Flora promete encaminhamento sem contexto suficiente', async () => {
+    await handleEscalations({
+      sessionId: '5511555555555@s.whatsapp.net',
+      userText: 'Pode me ajudar nisso?',
+      assistantMessages: ['Vou repassar pra Mariana para ela falar com você.'],
+    });
+
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCrmRequest).toHaveBeenCalledWith(expect.objectContaining({
+      assunto: expect.stringMatching(/^5511555555555@s\.whatsapp\.net:atendimento_humano:/),
+      payload: expect.objectContaining({
+        tipo: 'atendimento_humano',
+        prioridade: 'urgente',
+      }),
+    }));
+  });
+
   it('inclui pergunta apenas para dúvida e atendimento humano, usando o lote exato truncado em 1000 chars', async () => {
     const pergunta = `${'a'.repeat(1005)} fim`;
 
@@ -195,6 +313,7 @@ describe('handleEscalations', () => {
         tipo: 'pagamento',
         prioridade: 'normal',
         motivo: 'pagamento',
+        pergunta: 'a'.repeat(1000),
       },
     });
     expect(mockOutboxDb.state.insertedRows).toHaveLength(0);
@@ -221,6 +340,7 @@ describe('handleEscalations', () => {
         tipo: 'pagamento',
         prioridade: 'normal',
         motivo: 'pagamento',
+        pergunta: 'Quero reembolso do meu sinal',
       },
     });
     expect(mockOutboxDb.state.insertedRows).toHaveLength(0);
@@ -239,10 +359,11 @@ describe('handleEscalations', () => {
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({
         err: 'segredo interno payload completo',
-        session_id: '5511777777777@s.whatsapp.net',
         motivo: 'duvida',
       }),
       expect.stringMatching(/outbox|escala/i),
     );
+    expect(mockLogger.error.mock.calls[0]?.[0]).not.toHaveProperty('session_id');
+    expect(mockLogger.error.mock.calls[0]?.[0]).not.toHaveProperty('assunto');
   });
 });

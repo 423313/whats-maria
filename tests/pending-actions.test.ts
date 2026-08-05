@@ -229,8 +229,9 @@ describe('handlePendingActions', () => {
 
     expect(mockCheckConsecutiveSlotsFree).toHaveBeenCalledTimes(1);
     expect(mockLogger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ err: 'CRM token secreto stack interna' }),
+      expect.objectContaining({ err: 'CRM token secreto stack interna', evento_id: 'pending-new-id' }),
       expect.stringMatching(/crm/i),
     );
+    expect(mockLogger.error.mock.calls[0]?.[0]).not.toHaveProperty('session_id');
   });
 });

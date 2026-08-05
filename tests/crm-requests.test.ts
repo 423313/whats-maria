@@ -246,6 +246,46 @@ describe('crm-requests outbox', () => {
     expect(mockDb.rows).toHaveLength(1);
   });
 
+  it('não refaz POST quando a mesma solicitação explícita já foi entregue antes do reinício', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: '55555555-5555-4555-8555-555555555555' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { enqueueCrmRequest } = await import('../src/services/crm-requests.js');
+
+    await enqueueCrmRequest({
+      eventoId: 'explicita-1',
+      assunto: '5511999999999@s.whatsapp.net:agendamento:hash-pedro',
+      pendingActionId: null,
+      payload: {
+        acao_flora_id: 'explicita-1',
+        sessao: '5511999999999@s.whatsapp.net',
+        tipo: 'agendamento',
+        motivo: 'agendamento',
+      },
+    });
+
+    await enqueueCrmRequest({
+      eventoId: 'explicita-2',
+      assunto: '5511999999999@s.whatsapp.net:agendamento:hash-pedro',
+      pendingActionId: null,
+      payload: {
+        acao_flora_id: 'explicita-2',
+        sessao: '5511999999999@s.whatsapp.net',
+        tipo: 'agendamento',
+        motivo: 'agendamento',
+      },
+    });
+
+    expect(mockDb.rows).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockDb.rows[0]?.evento_id).toBe('explicita-1');
+    expect(mockDb.rows[0]?.status).toBe('entregue');
+  });
+
   it('reutiliza a linha pendente pelo mesmo assunto e atualiza o payload sem duplicar', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('seed')));
 

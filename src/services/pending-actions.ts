@@ -163,7 +163,7 @@ export async function handlePendingActions(
     } catch (error) {
       crmFalhou = true;
       logger.error(
-        { err: sanitizeCrmError(error), session_id: sessionId, evento_id: pendingActionId },
+        { err: sanitizeCrmError(error), evento_id: pendingActionId },
         'crm outbox: enfileiramento ou entrega falhou, fluxo da pendência preservado',
       );
     }
@@ -201,7 +201,7 @@ export async function handlePendingActions(
             `⚠️ AVISO: slot ${timeMatch[1]} tem apenas ${freeSlots * 30} min livre` +
             ` (serviço precisa de ~${minSlots * 30} min). Confirme a agenda antes de responder à cliente.`;
           logger.warn(
-            { session_id: sessionId, slot: timeMatch[1], freeSlots, minSlots, service },
+            { slot: timeMatch[1], freeSlots, minSlots, service },
             'slot validation: janela insuficiente detectada',
           );
         }
@@ -214,7 +214,7 @@ export async function handlePendingActions(
   // Notifica Mariana via WhatsApp
   if (!env.MARIANA_NOTIFY_PHONE) {
     logger.warn(
-      { session_id: sessionId, type },
+      { type },
       'MARIANA_NOTIFY_PHONE não configurada — notificação não será enviada',
     );
     return;
@@ -222,7 +222,7 @@ export async function handlePendingActions(
 
   if (!env.EVOLUTION_INSTANCE) {
     logger.warn(
-      { session_id: sessionId, type },
+      { type },
       'EVOLUTION_INSTANCE não configurada — notificação não será enviada',
     );
     return;
@@ -251,7 +251,7 @@ export async function handlePendingActions(
     lines.push(`WhatsApp: ${phone}`);
 
     logger.info(
-      { session_id: sessionId, type, to: env.MARIANA_NOTIFY_PHONE, lineCount: lines.length },
+      { type, lineCount: lines.length },
       'enviando notificação para Mariana',
     );
 
@@ -261,12 +261,12 @@ export async function handlePendingActions(
     }
 
     logger.info(
-      { session_id: sessionId, type },
+      { type },
       'notificação enviada com sucesso para Mariana',
     );
   } catch (err) {
     logger.error(
-      { err: err instanceof Error ? err.message : String(err), session_id: sessionId, type },
+      { err: err instanceof Error ? err.message : String(err), type },
       'notificação para Mariana falhou — verificar MARIANA_NOTIFY_PHONE e EVOLUTION_INSTANCE',
     );
   }

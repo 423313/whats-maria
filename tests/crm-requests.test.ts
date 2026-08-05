@@ -200,6 +200,11 @@ describe('crm-requests outbox', () => {
     const body = JSON.parse(String(requestInit.body));
     expect(body.evento_id).toBe('pending-1');
     expect(body.acao_flora_id).toBe('pending-1');
+    expect(body.sessao_id).toBe('5511999999999@s.whatsapp.net');
+    expect(body.cliente_nome).toBe('Ana');
+    expect(body.cliente_telefone).toBe('5511999999999');
+    expect(body.servico_informado).toBe('Blindagem');
+    expect(body.status).toBe('aguardando_analise');
   });
 
   it('não chama o CRM quando CRM_CENTRAL_ENABLED está off', async () => {

@@ -58,10 +58,29 @@ function nextRetryDelayMs(nextAttemptNumber: number): number {
 }
 
 function buildRequestBody(row: CrmOutboxRow): Record<string, unknown> {
+  const sessao = typeof row.payload.sessao_id === 'string'
+    ? row.payload.sessao_id
+    : typeof row.payload.sessao === 'string' ? row.payload.sessao : '';
+  const telefone = typeof row.payload.cliente_telefone === 'string'
+    ? row.payload.cliente_telefone
+    : typeof row.payload.telefone === 'string'
+      ? row.payload.telefone
+      : sessao.replace(/@s\.whatsapp\.net$/, '');
+  const nome = typeof row.payload.cliente_nome === 'string'
+    ? row.payload.cliente_nome
+    : typeof row.payload.nome === 'string' ? row.payload.nome : 'Cliente WhatsApp';
+  const servico = row.payload.servico_informado ?? row.payload.servico;
+
   return {
     evento_id: row.evento_id,
     assunto: row.assunto_chave,
     ...row.payload,
+    sessao_id: sessao,
+    cliente_nome: nome || 'Cliente WhatsApp',
+    cliente_telefone: telefone,
+    ...(servico !== undefined ? { servico_informado: servico } : {}),
+    prioridade: row.payload.prioridade ?? 'normal',
+    status: row.payload.status ?? 'aguardando_analise',
   };
 }
 
